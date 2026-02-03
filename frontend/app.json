@@ -1,37 +1,65 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "TapTapGo",
+    "slug": "taptapgo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "icon": "./assets/images/logo.png",
+    "scheme": "taptapgo",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.taptapgo.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Jwenn chofè ki pi pre ou",
+        "NSLocationAlwaysUsageDescription": "Swiv wout ou nan kous",
+        "NSCameraUsageDescription": "Pran foto pou dokiman ou",
+        "NSPhotoLibraryUsageDescription": "Chwazi foto pou profil ou"
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "foregroundImage": "./assets/images/logo.png",
+        "backgroundColor": "#FFFFFF"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.taptapgo.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/logo.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#000"
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Pèmèt TapTapGo konnen kote ou ye"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Chwazi foto pou profil ou",
+          "cameraPermission": "Pran foto pou dokiman ou"
         }
       ]
     ],

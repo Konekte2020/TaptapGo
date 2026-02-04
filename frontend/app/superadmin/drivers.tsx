@@ -9,24 +9,47 @@ import {
   Alert,
   RefreshControl,
   Image,
+  Modal,
+  TextInput,
+  ScrollView,
+  Platform,
 } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { driverAPI } from '../../src/services/api';
 
 export default function SuperAdminDrivers() {
+  const { filter: filterParam } = useLocalSearchParams<{ filter?: string }>();
   const [drivers, setDrivers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [docModalVisible, setDocModalVisible] = useState(false);
+  const [selectedDriver, setSelectedDriver] = useState<any>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [zoomVisible, setZoomVisible] = useState(false);
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
+  const [verifications, setVerifications] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     fetchDrivers();
   }, [filter]);
 
+  useEffect(() => {
+    if (typeof filterParam === 'string' && filterParam !== filter) {
+      setFilter(filterParam);
+    }
+    if (!filterParam && filter !== 'all') {
+      setFilter('all');
+    }
+  }, [filterParam]);
+
   const fetchDrivers = async () => {
     setLoading(true);
     try {
-      const status = filter === 'all' ? undefined : filter;
+      const status = ['pending', 'approved', 'rejected'].includes(filter) ? filter : undefined;
       const response = await driverAPI.getAll({ status });
       setDrivers(response.data.drivers || []);
     } catch (error) {
@@ -36,49 +59,77 @@ export default function SuperAdminDrivers() {
     }
   };
 
-  const handleApprove = async (driverId: string) => {
-    Alert.alert(
-      'Apwouve Chofè',
-      'Ou sèten ou vle apwouve chofè sa a?',
-      [
-        { text: 'Non', style: 'cancel' },
-        {
-          text: 'Wi',
-          onPress: async () => {
-            try {
-              await driverAPI.approve(driverId);
-              Alert.alert('Siksè', 'Chofè apwouve!');
-              fetchDrivers();
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab apwouve');
-            }
-          },
-        },
-      ]
-    );
+  const openDocModal = (driver: any) => {
+    setSelectedDriver(driver);
+    setRejectReason('');
+    setDocModalVisible(true);
   };
 
-  const handleReject = async (driverId: string) => {
-    Alert.alert(
-      'Rejte Chofè',
-      'Ou sèten ou vle rejte chofè sa a?',
-      [
-        { text: 'Non', style: 'cancel' },
-        {
-          text: 'Wi',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await driverAPI.reject(driverId);
-              Alert.alert('Siksè', 'Chofè rejte');
-              fetchDrivers();
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab rejte');
-            }
-          },
-        },
-      ]
-    );
+  const closeDocModal = () => {
+    setDocModalVisible(false);
+    setSelectedDriver(null);
+    setRejectReason('');
+  };
+
+  const openZoom = (uri: string) => {
+    setZoomImage(uri);
+    setZoomVisible(true);
+  };
+
+  const closeZoom = () => {
+    setZoomVisible(false);
+    setZoomImage(null);
+  };
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!selectedDriver || !docModalVisible) return;
+      setHistoryLoading(true);
+      try {
+        const response = await driverAPI.getVerifications(selectedDriver.id);
+        setVerifications(response.data.verifications || []);
+      } catch (error) {
+        console.error('Fetch verifications error:', error);
+        setVerifications([]);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+    loadHistory();
+  }, [selectedDriver, docModalVisible]);
+
+  const handleApprove = async () => {
+    if (!selectedDriver) return;
+    setSubmitting(true);
+    try {
+      await driverAPI.approve(selectedDriver.id);
+      Alert.alert('Siksè', 'Chofè apwouve!');
+      closeDocModal();
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab apwouve');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!selectedDriver) return;
+    if (!rejectReason || rejectReason.trim().length < 5) {
+      Alert.alert('Erè', 'Tanpri mete yon rezon (min 5 karaktè).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await driverAPI.reject(selectedDriver.id, rejectReason.trim());
+      Alert.alert('Siksè', 'Chofè rejte');
+      closeDocModal();
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab rejte');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -98,6 +149,13 @@ export default function SuperAdminDrivers() {
       default: return status;
     }
   };
+
+  const filteredDrivers =
+    filter === 'missing_docs'
+      ? drivers.filter(
+          (d) => !d.license_photo || !d.vehicle_photo || !d.vehicle_papers
+        )
+      : drivers;
 
   const renderDriver = ({ item }: { item: any }) => (
     <View style={styles.driverCard}>
@@ -146,18 +204,13 @@ export default function SuperAdminDrivers() {
       {item.status === 'pending' && (
         <View style={styles.actionButtons}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.rejectButton]}
-            onPress={() => handleReject(item.id)}
+            style={[styles.actionButton, styles.verifyButton]}
+            onPress={() => openDocModal(item)}
           >
-            <Ionicons name="close" size={18} color={Colors.error} />
-            <Text style={[styles.actionText, { color: Colors.error }]}>Rejte</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.approveButton]}
-            onPress={() => handleApprove(item.id)}
-          >
-            <Ionicons name="checkmark" size={18} color="white" />
-            <Text style={[styles.actionText, { color: 'white' }]}>Apwouve</Text>
+            <Ionicons name="document-text" size={18} color="white" />
+            <Text style={[styles.actionText, { color: 'white' }]}>
+              Verifye dokiman
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -169,6 +222,7 @@ export default function SuperAdminDrivers() {
     { key: 'pending', label: 'An atant' },
     { key: 'approved', label: 'Apwouve' },
     { key: 'rejected', label: 'Rejte' },
+    { key: 'missing_docs', label: 'Dokiman manke' },
   ];
 
   return (
@@ -192,7 +246,7 @@ export default function SuperAdminDrivers() {
       </View>
 
       <FlatList
-        data={drivers}
+        data={filteredDrivers}
         keyExtractor={(item) => item.id}
         renderItem={renderDriver}
         contentContainerStyle={styles.listContent}
@@ -206,6 +260,153 @@ export default function SuperAdminDrivers() {
           </View>
         }
       />
+
+      <Modal
+        visible={docModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeDocModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={closeDocModal}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Dokiman Chofè</Text>
+            <View style={styles.modalSpacer} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <Text style={styles.modalName}>
+              {selectedDriver?.full_name || 'Chofè'}
+            </Text>
+            <Text style={styles.modalMeta}>
+              {selectedDriver?.phone || '—'} · {selectedDriver?.email || '—'}
+            </Text>
+
+            <View style={styles.docGrid}>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Foto Lisans</Text>
+                {selectedDriver?.license_photo ? (
+                  <TouchableOpacity onPress={() => openZoom(selectedDriver.license_photo)}>
+                    <Image
+                      source={{ uri: selectedDriver.license_photo }}
+                      style={styles.docImage}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+                {Platform.OS === 'web' && selectedDriver?.license_photo && (
+                  <TouchableOpacity
+                    style={styles.docLink}
+                    onPress={() => window.open(selectedDriver.license_photo, '_blank')}
+                  >
+                    <Text style={styles.docLinkText}>Ouvri nan nouvo tab</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Foto Veyikil</Text>
+                {selectedDriver?.vehicle_photo ? (
+                  <TouchableOpacity onPress={() => openZoom(selectedDriver.vehicle_photo)}>
+                    <Image
+                      source={{ uri: selectedDriver.vehicle_photo }}
+                      style={styles.docImage}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+                {Platform.OS === 'web' && selectedDriver?.vehicle_photo && (
+                  <TouchableOpacity
+                    style={styles.docLink}
+                    onPress={() => window.open(selectedDriver.vehicle_photo, '_blank')}
+                  >
+                    <Text style={styles.docLinkText}>Ouvri nan nouvo tab</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Papye Veyikil</Text>
+                {selectedDriver?.vehicle_papers ? (
+                  <TouchableOpacity onPress={() => openZoom(selectedDriver.vehicle_papers)}>
+                    <Image
+                      source={{ uri: selectedDriver.vehicle_papers }}
+                      style={styles.docImage}
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+                {Platform.OS === 'web' && selectedDriver?.vehicle_papers && (
+                  <TouchableOpacity
+                    style={styles.docLink}
+                    onPress={() => window.open(selectedDriver.vehicle_papers, '_blank')}
+                  >
+                    <Text style={styles.docLinkText}>Ouvri nan nouvo tab</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <Text style={styles.historyTitle}>Istwa Verifikasyon</Text>
+            {historyLoading ? (
+              <Text style={styles.historyEmpty}>Ap chaje...</Text>
+            ) : verifications.length === 0 ? (
+              <Text style={styles.historyEmpty}>Pa gen istwa</Text>
+            ) : (
+              verifications.map((v) => (
+                <View key={v.id} style={styles.historyRow}>
+                  <Text style={styles.historyStatus}>
+                    {v.status === 'approved' ? 'Apwouve' : 'Rejte'}
+                  </Text>
+                  <Text style={styles.historyReason}>
+                    {v.reason || '—'}
+                  </Text>
+                  <Text style={styles.historyDate}>
+                    {String(v.created_at || '').slice(0, 10)}
+                  </Text>
+                </View>
+              ))
+            )}
+
+            <Text style={styles.formLabel}>Rezon pou rejte</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Ekri rezon lan"
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalReject]}
+                onPress={handleReject}
+                disabled={submitting}
+              >
+                <Text style={styles.modalButtonText}>Rejte</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalApprove]}
+                onPress={handleApprove}
+                disabled={submitting}
+              >
+                <Text style={styles.modalButtonText}>Apwouve</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal visible={zoomVisible} transparent animationType="fade">
+        <TouchableOpacity style={styles.zoomBackdrop} onPress={closeZoom}>
+          {zoomImage && (
+            <Image source={{ uri: zoomImage }} style={styles.zoomImage} resizeMode="contain" />
+          )}
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -349,15 +550,154 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
-  rejectButton: {
-    backgroundColor: Colors.surface,
-  },
-  approveButton: {
-    backgroundColor: Colors.success,
+  verifyButton: {
+    backgroundColor: Colors.primary,
   },
   actionText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  modalSpacer: {
+    width: 24,
+  },
+  modalContent: {
+    padding: 20,
+    gap: 12,
+  },
+  modalName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  modalMeta: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  docGrid: {
+    gap: 12,
+  },
+  docCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+  },
+  docLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  docLink: {
+    marginTop: 8,
+  },
+  docLinkText: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  docImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
+    backgroundColor: Colors.background,
+  },
+  docMissing: {
+    fontSize: 12,
+    color: Colors.error,
+  },
+  formLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: Colors.background,
+    color: Colors.text,
+    minHeight: 60,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalReject: {
+    backgroundColor: Colors.error,
+  },
+  modalApprove: {
+    backgroundColor: Colors.success,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  zoomBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  zoomImage: {
+    width: '100%',
+    height: '100%',
+  },
+  historyTitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 8,
+  },
+  historyRow: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  historyStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  historyReason: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  historyDate: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  historyEmpty: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 6,
   },
   emptyContainer: {
     alignItems: 'center',

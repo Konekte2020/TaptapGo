@@ -35,12 +35,13 @@ export default function SuperAdminSettings() {
   };
 
   const menuItems = [
-    { icon: 'person-outline', label: 'Profil', onPress: () => {} },
-    { icon: 'shield-outline', label: 'Sekiri', onPress: () => {} },
-    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => {} },
-    { icon: 'document-outline', label: 'Rapò', onPress: () => {} },
-    { icon: 'analytics-outline', label: 'Analitik', onPress: () => {} },
-    { icon: 'help-circle-outline', label: 'Èd', onPress: () => {} },
+    { icon: 'person-outline', label: 'Profil', onPress: () => router.push('/superadmin/profile') },
+    { icon: 'shield-outline', label: 'Sekiri', onPress: () => router.push('/superadmin/security') },
+    { icon: 'cash-outline', label: 'Pri', onPress: () => router.push('/superadmin/pricing') },
+    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => router.push('/superadmin/notifications') },
+    { icon: 'document-outline', label: 'Rapò', onPress: () => router.push('/superadmin/reports') },
+    { icon: 'analytics-outline', label: 'Analitik', onPress: () => router.push('/superadmin/analytics') },
+    { icon: 'help-circle-outline', label: 'Èd', onPress: () => router.push('/superadmin/help') },
   ];
 
   return (

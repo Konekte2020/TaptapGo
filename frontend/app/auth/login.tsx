@@ -49,7 +49,11 @@ export default function Login() {
     setLoading(true);
     try {
       const actualType = userType === 'admin' ? 'admin' : userType;
-      const response = await authAPI.login(phoneOrEmail, password, actualType);
+      let response = await authAPI.login(phoneOrEmail, password, actualType);
+
+      if (!response.data.success && userType === 'admin') {
+        response = await authAPI.login(phoneOrEmail, password, 'subadmin');
+      }
       
       if (response.data.success) {
         await login(response.data.user, response.data.token);
@@ -68,6 +72,9 @@ export default function Login() {
             break;
           case 'admin':
             router.replace('/admin/dashboard');
+            break;
+          case 'subadmin':
+            router.replace('/admin-souadmin/dashboard');
             break;
           case 'superadmin':
             router.replace('/superadmin/dashboard');

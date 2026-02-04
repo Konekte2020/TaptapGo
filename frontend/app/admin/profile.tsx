@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,15 +8,25 @@ import {
   ScrollView,
   Alert,
   Image,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
+import { profileAPI } from '../../src/services/api';
 
 export default function AdminProfile() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user, logout, updateUser } = useAuthStore();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    full_name: user?.full_name || '',
+    email: user?.email || '',
+    phone: user?.phone || '',
+    logo: user?.logo || '',
+  });
 
   const handleLogout = () => {
     Alert.alert(
@@ -33,6 +43,42 @@ export default function AdminProfile() {
         },
       ]
     );
+  };
+
+  const pickLogo = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.6,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets[0].base64) {
+      setForm({ ...form, logo: `data:image/jpeg;base64,${result.assets[0].base64}` });
+    }
+  };
+
+  const handleSave = async () => {
+    if (!form.full_name || !form.email) {
+      Alert.alert('Erè', 'Non ak email obligatwa');
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await profileAPI.update({
+        full_name: form.full_name,
+        email: form.email,
+        phone: form.phone,
+        logo: form.logo,
+      });
+      updateUser(response.data.user);
+      Alert.alert('Siksè', 'Profil mete ajou');
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab sove');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const menuItems = [
@@ -53,19 +99,40 @@ export default function AdminProfile() {
         {/* Profile Card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
-            {user?.logo ? (
-              <Image source={{ uri: user.logo }} style={styles.logo} />
+            {form.logo ? (
+              <Image source={{ uri: form.logo }} style={styles.logo} />
             ) : (
               <View style={[styles.avatar, { backgroundColor: user?.primary_color || Colors.primary }]}>
                 <Ionicons name="shield" size={40} color="white" />
               </View>
             )}
           </View>
+          <TouchableOpacity style={styles.changeLogoButton} onPress={pickLogo}>
+            <Text style={styles.changeLogoText}>Chanje foto</Text>
+          </TouchableOpacity>
           {user?.brand_name && (
             <Text style={styles.brandName}>{user.brand_name}</Text>
           )}
-          <Text style={styles.userName}>{user?.full_name}</Text>
-          <Text style={styles.userEmail}>{user?.email}</Text>
+          <TextInput
+            style={styles.input}
+            value={form.full_name}
+            onChangeText={(text) => setForm({ ...form, full_name: text })}
+            placeholder="Non"
+          />
+          <TextInput
+            style={styles.input}
+            value={form.email}
+            onChangeText={(text) => setForm({ ...form, email: text })}
+            placeholder="Email"
+            autoCapitalize="none"
+          />
+          <TextInput
+            style={styles.input}
+            value={form.phone}
+            onChangeText={(text) => setForm({ ...form, phone: text })}
+            placeholder="Telefòn"
+            keyboardType="phone-pad"
+          />
           <View style={styles.badge}>
             <Ionicons name="briefcase" size={12} color="white" />
             <Text style={styles.badgeText}>Admin White-Label</Text>
@@ -117,6 +184,16 @@ export default function AdminProfile() {
           ))}
         </View>
 
+        <TouchableOpacity
+          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+          onPress={handleSave}
+          disabled={saving}
+        >
+          <Text style={styles.saveButtonText}>
+            {saving ? 'Ap sove...' : 'Sove chanjman'}
+          </Text>
+        </TouchableOpacity>
+
         {/* Logout Button */}
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={22} color={Colors.error} />
@@ -161,6 +238,13 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 12,
   },
+  changeLogoButton: {
+    marginBottom: 8,
+  },
+  changeLogoText: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
   avatar: {
     width: 80,
     height: 80,
@@ -174,16 +258,16 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     marginBottom: 4,
   },
-  userName: {
-    fontSize: 18,
-    fontWeight: '600',
+  input: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
     color: Colors.text,
-    marginBottom: 4,
-  },
-  userEmail: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    marginBottom: 12,
+    backgroundColor: Colors.background,
   },
   badge: {
     flexDirection: 'row',
@@ -292,6 +376,20 @@ const styles = StyleSheet.create({
   logoutText: {
     fontSize: 16,
     color: Colors.error,
+    fontWeight: '600',
+  },
+  saveButton: {
+    backgroundColor: Colors.primary,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveButtonText: {
+    color: 'white',
     fontWeight: '600',
   },
   version: {

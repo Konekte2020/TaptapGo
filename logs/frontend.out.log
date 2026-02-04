@@ -1,0 +1,10 @@
+yarn run v1.22.22
+$ expo start
+env: load .env
+env: export EXPO_TUNNEL_SUBDOMAIN EXPO_PACKAGER_HOSTNAME EXPO_PUBLIC_BACKEND_URL EXPO_USE_FAST_RESOLVER METRO_CACHE_ROOT EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_KEY
+Starting project at C:\Users\missi\Desktop\TapTapGo\TaptapGo\frontend
+Fast resolver is enabled.
+Starting Metro Bundler
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

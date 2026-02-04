@@ -42,6 +42,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def create_notification(user_id: str, user_type: str, title: str, body: str):
+    """Create an in-app notification"""
+    try:
+        supabase.table("notifications").insert({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "user_type": user_type,
+            "title": title,
+            "body": body
+        }).execute()
+    except Exception as e:
+        logger.error(f"Notification error: {e}")
+
 # ============== PYDANTIC MODELS ==============
 
 # Auth Models
@@ -52,6 +65,7 @@ class UserRegisterPassenger(BaseModel):
     city: str
     password: str
     profile_photo: Optional[str] = None  # base64
+    admin_id: Optional[str] = None
 
 class UserRegisterDriver(BaseModel):
     full_name: str
@@ -68,6 +82,21 @@ class UserRegisterDriver(BaseModel):
     profile_photo: Optional[str] = None  # base64
     password: str
 
+class AdminDriverCreate(BaseModel):
+    full_name: str
+    email: EmailStr
+    phone: str
+    city: str
+    vehicle_type: str
+    vehicle_brand: str
+    vehicle_model: str
+    plate_number: str
+    vehicle_photo: Optional[str] = None
+    license_photo: Optional[str] = None
+    vehicle_papers: Optional[str] = None
+    profile_photo: Optional[str] = None
+    password: str
+
 class LoginRequest(BaseModel):
     phone_or_email: str
     password: str
@@ -80,16 +109,73 @@ class OTPVerify(BaseModel):
     phone: str
     code: str
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+class PricingUpdate(BaseModel):
+    base_fare: float
+    price_per_km: float
+    price_per_min: float
+    commission_rate: Optional[float] = None
+
 class AdminCreate(BaseModel):
     full_name: str
     email: EmailStr
     phone: str
     password: str
+    address: Optional[str] = None
+    force_password_change: Optional[bool] = True
     cities: List[str] = []  # Cities this admin manages
     brand_name: Optional[str] = None
     logo: Optional[str] = None  # base64
     primary_color: Optional[str] = "#E53935"
     secondary_color: Optional[str] = "#1E3A5F"
+
+class AdminUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    force_password_change: Optional[bool] = None
+    cities: Optional[List[str]] = None
+    brand_name: Optional[str] = None
+    logo: Optional[str] = None  # base64
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    commission_rate: Optional[float] = None
+    is_active: Optional[bool] = None
+
+class AdminPricingUpdate(BaseModel):
+    base_fare: float
+    price_per_km: float
+    price_per_min: float
+    surge_multiplier: float = 1.0
+    commission_rate: float
+
+class AdminPaymentMethodsUpdate(BaseModel):
+    moncash_enabled: bool = False
+    moncash_phone: Optional[str] = None
+    natcash_enabled: bool = False
+    natcash_phone: Optional[str] = None
+    bank_enabled: bool = False
+    bank_name: Optional[str] = None
+    bank_account_name: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    default_method: Optional[str] = None
+
+class ComplaintCreate(BaseModel):
+    target_user_type: str  # 'driver' or 'passenger'
+    target_user_id: str
+    message: str
+    ride_id: Optional[str] = None
+
+class SubAdminCreate(BaseModel):
+    full_name: str
+    email: EmailStr
+    phone: str
+    password: str
+    force_password_change: Optional[bool] = True
 
 class SuperAdminCreate(BaseModel):
     full_name: str
@@ -207,18 +293,18 @@ def generate_otp() -> str:
     """Generate mock OTP for development"""
     return "123456"  # Mock OTP
 
-def calculate_ride_price(city_data: dict, vehicle_type: str, distance_km: float, duration_min: float) -> dict:
-    """Calculate ride price based on city pricing"""
-    if vehicle_type == 'moto':
+def calculate_ride_price(city_data: dict, distance_km: float, duration_min: float, pricing_data: Optional[dict] = None) -> dict:
+    """Calculate ride price based on pricing settings"""
+    if pricing_data:
+        base = pricing_data.get('base_fare', 0)
+        per_km = pricing_data.get('price_per_km', 0)
+        per_min = pricing_data.get('price_per_min', 0)
+        surge = pricing_data.get('surge_multiplier', city_data.get('surge_multiplier', 1.0))
+    else:
         base = city_data.get('base_fare_moto', 50)
         per_km = city_data.get('price_per_km_moto', 25)
         per_min = city_data.get('price_per_min_moto', 5)
-    else:
-        base = city_data.get('base_fare_car', 100)
-        per_km = city_data.get('price_per_km_car', 50)
-        per_min = city_data.get('price_per_min_car', 10)
-    
-    surge = city_data.get('surge_multiplier', 1.0)
+        surge = city_data.get('surge_multiplier', 1.0)
     
     subtotal = base + (per_km * distance_km) + (per_min * duration_min)
     total = subtotal * surge
@@ -253,6 +339,7 @@ async def init_database():
             wallet_balance DECIMAL DEFAULT 0,
             is_verified BOOLEAN DEFAULT FALSE,
             is_active BOOLEAN DEFAULT TRUE,
+            admin_id UUID,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
         );
@@ -274,6 +361,8 @@ async def init_database():
             vehicle_papers TEXT,
             profile_photo TEXT,
             status TEXT DEFAULT 'pending',
+            document_status TEXT DEFAULT 'pending',
+            rejection_reason TEXT,
             is_online BOOLEAN DEFAULT FALSE,
             is_verified BOOLEAN DEFAULT FALSE,
             is_active BOOLEAN DEFAULT TRUE,
@@ -283,8 +372,31 @@ async def init_database():
             total_rides INTEGER DEFAULT 0,
             wallet_balance DECIMAL DEFAULT 0,
             admin_id UUID,
+            verified_at TIMESTAMP,
+            verified_by UUID,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Driver verifications history
+        CREATE TABLE IF NOT EXISTS driver_verifications (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            driver_id UUID NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT,
+            verified_by UUID,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Notifications table (in-app)
+        CREATE TABLE IF NOT EXISTS notifications (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL,
+            user_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            is_read BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
         );
         
         -- Admins table (white-label)
@@ -294,12 +406,38 @@ async def init_database():
             phone TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
+            address TEXT,
+            force_password_change BOOLEAN DEFAULT TRUE,
             cities TEXT[] DEFAULT '{}',
             brand_name TEXT,
             logo TEXT,
             primary_color TEXT DEFAULT '#E53935',
             secondary_color TEXT DEFAULT '#1E3A5F',
             commission_rate DECIMAL DEFAULT 10,
+            base_fare DECIMAL DEFAULT 0,
+            price_per_km DECIMAL DEFAULT 0,
+            price_per_min DECIMAL DEFAULT 0,
+            surge_multiplier DECIMAL DEFAULT 1.0,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Ensure admin pricing columns exist
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS base_fare DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_km DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_min DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS surge_multiplier DECIMAL DEFAULT 1.0;
+
+        -- SubAdmins table (admin assistants)
+        CREATE TABLE IF NOT EXISTS subadmins (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            admin_id UUID NOT NULL,
+            full_name TEXT NOT NULL,
+            phone TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            force_password_change BOOLEAN DEFAULT TRUE,
             is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
@@ -332,6 +470,50 @@ async def init_database():
             is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Pricing settings (platform vs white-label)
+        CREATE TABLE IF NOT EXISTS pricing_settings (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            scope TEXT UNIQUE NOT NULL,
+            base_fare DECIMAL DEFAULT 0,
+            price_per_km DECIMAL DEFAULT 0,
+            price_per_min DECIMAL DEFAULT 0,
+            commission_rate DECIMAL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Admin payment methods (global, per admin)
+        CREATE TABLE IF NOT EXISTS admin_payment_methods (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            admin_id UUID UNIQUE NOT NULL,
+            moncash_enabled BOOLEAN DEFAULT FALSE,
+            moncash_phone TEXT,
+            natcash_enabled BOOLEAN DEFAULT FALSE,
+            natcash_phone TEXT,
+            bank_enabled BOOLEAN DEFAULT FALSE,
+            bank_name TEXT,
+            bank_account_name TEXT,
+            bank_account_number TEXT,
+            default_method TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+
+        ALTER TABLE admin_payment_methods ADD COLUMN IF NOT EXISTS default_method TEXT;
+
+        -- Complaints
+        CREATE TABLE IF NOT EXISTS complaints (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            ride_id UUID,
+            admin_id UUID,
+            from_user_type TEXT NOT NULL,
+            from_user_id UUID NOT NULL,
+            target_user_type TEXT NOT NULL,
+            target_user_id UUID NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT DEFAULT 'open',
+            created_at TIMESTAMP DEFAULT NOW()
         );
         
         -- Rides table
@@ -484,6 +666,7 @@ async def register_passenger(data: UserRegisterPassenger):
             "city": data.city,
             "password_hash": hash_password(data.password),
             "profile_photo": data.profile_photo,
+            "admin_id": data.admin_id,
             "wallet_balance": 0,
             "is_verified": True,  # Set to True after OTP in production
             "is_active": True
@@ -583,6 +766,7 @@ async def login(data: LoginRequest):
             'passenger': 'passengers',
             'driver': 'drivers',
             'admin': 'admins',
+            'subadmin': 'subadmins',
             'superadmin': 'superadmins'
         }
         
@@ -592,6 +776,12 @@ async def login(data: LoginRequest):
         
         # Find user by phone or email
         result = supabase.table(table).select("*").or_(f"phone.eq.{data.phone_or_email},email.eq.{data.phone_or_email}").execute()
+        
+        if not result.data and data.user_type == 'admin':
+            table = table_map.get('subadmin')
+            result = supabase.table(table).select("*").or_(f"phone.eq.{data.phone_or_email},email.eq.{data.phone_or_email}").execute()
+            if result.data:
+                data.user_type = 'subadmin'
         
         if not result.data:
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -609,10 +799,14 @@ async def login(data: LoginRequest):
             return {
                 "success": False,
                 "message": f"Account is {user.get('status')}. Please wait for admin approval.",
-                "status": user.get('status')
+                "status": user.get('status'),
+                "reason": user.get('rejection_reason')
             }
         
-        admin_id = user.get('admin_id') if data.user_type == 'driver' else (user.get('id') if data.user_type == 'admin' else None)
+        admin_id = (
+            user.get('admin_id') if data.user_type in ['driver', 'subadmin']
+            else (user.get('id') if data.user_type == 'admin' else None)
+        )
         token = create_token(user['id'], data.user_type, admin_id)
         
         # Remove sensitive data
@@ -687,6 +881,8 @@ async def create_admin(data: AdminCreate, current_user: dict = Depends(get_curre
             "phone": data.phone,
             "email": data.email,
             "password_hash": hash_password(data.password),
+            "address": data.address,
+            "force_password_change": data.force_password_change if data.force_password_change is not None else True,
             "cities": data.cities,
             "brand_name": data.brand_name,
             "logo": data.logo,
@@ -708,6 +904,84 @@ async def create_admin(data: AdminCreate, current_user: dict = Depends(get_curre
         logger.error(f"Admin creation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.post("/admin/subadmins")
+async def create_subadmin(data: SubAdminCreate, current_user: dict = Depends(get_current_user)):
+    """Create a subadmin (admin assistant)"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Only Admin can create subadmins")
+    
+    try:
+        subadmin_data = {
+            "id": str(uuid.uuid4()),
+            "admin_id": current_user['user_id'],
+            "full_name": data.full_name,
+            "phone": data.phone,
+            "email": data.email,
+            "password_hash": hash_password(data.password),
+            "force_password_change": data.force_password_change if data.force_password_change is not None else True,
+            "is_active": True
+        }
+        result = supabase.table("subadmins").insert(subadmin_data).execute()
+        if result.data:
+            subadmin = result.data[0]
+            subadmin.pop('password_hash', None)
+            return {"success": True, "subadmin": subadmin}
+        raise HTTPException(status_code=500, detail="Creation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Subadmin creation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/subadmins")
+async def get_subadmins(current_user: dict = Depends(get_current_user)):
+    """Get subadmins for current admin"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Only Admin can view subadmins")
+    
+    try:
+        result = supabase.table("subadmins").select("*").eq("admin_id", current_user['user_id']).execute()
+        subadmins = result.data or []
+        for s in subadmins:
+            s.pop('password_hash', None)
+        return {"subadmins": subadmins}
+    except Exception as e:
+        logger.error(f"Get subadmins error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/admin/subadmins/{subadmin_id}/status")
+async def set_subadmin_status(subadmin_id: str, is_active: bool, current_user: dict = Depends(get_current_user)):
+    """Enable/disable a subadmin"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Only Admin can change status")
+    
+    try:
+        result = supabase.table("subadmins").update({
+            "is_active": is_active,
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", subadmin_id).eq("admin_id", current_user['user_id']).execute()
+        if result.data:
+            return {"success": True, "is_active": is_active}
+        raise HTTPException(status_code=404, detail="Subadmin not found")
+    except Exception as e:
+        logger.error(f"Subadmin status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/admin/subadmins/{subadmin_id}")
+async def delete_subadmin(subadmin_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a subadmin"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Only Admin can delete subadmins")
+    
+    try:
+        result = supabase.table("subadmins").delete().eq("id", subadmin_id).eq("admin_id", current_user['user_id']).execute()
+        if result.data:
+            return {"success": True}
+        raise HTTPException(status_code=404, detail="Subadmin not found")
+    except Exception as e:
+        logger.error(f"Subadmin delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.get("/superadmin/admins")
 async def get_all_admins(current_user: dict = Depends(get_current_user)):
     """Get all admins"""
@@ -724,6 +998,62 @@ async def get_all_admins(current_user: dict = Depends(get_current_user)):
         logger.error(f"Get admins error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.put("/superadmin/admins/{admin_id}")
+async def update_admin(admin_id: str, data: AdminUpdate, current_user: dict = Depends(get_current_user)):
+    """Update an admin"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can update admins")
+    
+    try:
+        update_data = data.dict(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+        result = supabase.table("admins").update(update_data).eq("id", admin_id).execute()
+        if result.data:
+            admin = result.data[0]
+            admin.pop('password_hash', None)
+            return {"success": True, "admin": admin}
+        raise HTTPException(status_code=404, detail="Admin not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/superadmin/admins/{admin_id}/status")
+async def set_admin_status(admin_id: str, is_active: bool, current_user: dict = Depends(get_current_user)):
+    """Enable/disable an admin"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can change status")
+    
+    try:
+        result = supabase.table("admins").update({
+            "is_active": is_active,
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", admin_id).execute()
+        if result.data:
+            return {"success": True, "is_active": is_active}
+        raise HTTPException(status_code=404, detail="Admin not found")
+    except Exception as e:
+        logger.error(f"Admin status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/superadmin/admins/{admin_id}")
+async def delete_admin(admin_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete an admin"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can delete admins")
+    
+    try:
+        result = supabase.table("admins").delete().eq("id", admin_id).execute()
+        if result.data:
+            return {"success": True}
+        raise HTTPException(status_code=404, detail="Admin not found")
+    except Exception as e:
+        logger.error(f"Admin delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.get("/superadmin/stats")
 async def get_superadmin_stats(current_user: dict = Depends(get_current_user)):
     """Get system-wide statistics"""
@@ -735,11 +1065,79 @@ async def get_superadmin_stats(current_user: dict = Depends(get_current_user)):
         drivers = supabase.table("drivers").select("id", count="exact").execute()
         admins = supabase.table("admins").select("id", count="exact").execute()
         cities = supabase.table("cities").select("id", count="exact").execute()
-        rides = supabase.table("rides").select("id,final_price,status").execute()
+        rides = supabase.table("rides").select("id,final_price,status,driver_id,admin_id,city,created_at,completed_at").execute()
+        drivers_list = supabase.table("drivers").select("id,admin_id,status").execute().data or []
+        admins_list = supabase.table("admins").select("id,full_name,brand_name").execute().data or []
         
-        total_revenue = sum(r.get('final_price', 0) or 0 for r in (rides.data or []) if r.get('status') == 'completed')
-        completed_rides = len([r for r in (rides.data or []) if r.get('status') == 'completed'])
-        pending_drivers = len([d for d in supabase.table("drivers").select("status").execute().data or [] if d.get('status') == 'pending'])
+        driver_admin_map = {d.get('id'): d.get('admin_id') for d in drivers_list}
+        admin_name_map = {
+            a.get('id'): (a.get('brand_name') or a.get('full_name') or 'Admin')
+            for a in admins_list
+        }
+        completed_rides = 0
+        direct_revenue = 0
+        admin_revenue = 0
+        city_revenue = {}
+        admin_revenue_map = {}
+        now = datetime.utcnow()
+        daily_30 = {}
+        
+        for ride in (rides.data or []):
+            if ride.get('status') != 'completed':
+                continue
+            completed_rides += 1
+            price = ride.get('final_price', 0) or 0
+            admin_id = ride.get('admin_id') or driver_admin_map.get(ride.get('driver_id'))
+            if admin_id:
+                admin_revenue += price
+                admin_revenue_map[admin_id] = admin_revenue_map.get(admin_id, 0) + price
+            else:
+                direct_revenue += price
+            
+            city = ride.get('city')
+            if city:
+                city_revenue[city] = city_revenue.get(city, 0) + price
+            
+            date_str = None
+            if ride.get('completed_at'):
+                try:
+                    date_str = ride.get('completed_at')[:10]
+                except Exception:
+                    date_str = None
+            if not date_str and ride.get('created_at'):
+                try:
+                    date_str = ride.get('created_at')[:10]
+                except Exception:
+                    date_str = None
+            
+            if date_str:
+                daily_30[date_str] = daily_30.get(date_str, 0) + price
+        
+        total_revenue = direct_revenue + admin_revenue
+        pending_drivers = len([d for d in drivers_list if d.get('status') == 'pending'])
+
+        def build_daily_series(days: int):
+            series = []
+            for i in range(days - 1, -1, -1):
+                day = (now - timedelta(days=i)).strftime('%Y-%m-%d')
+                series.append({
+                    "date": day,
+                    "revenue": round(daily_30.get(day, 0), 2)
+                })
+            return series
+
+        top_cities = sorted(
+            [{"city": c, "revenue": round(v, 2)} for c, v in city_revenue.items()],
+            key=lambda x: x["revenue"],
+            reverse=True
+        )[:5]
+
+        top_admins = sorted(
+            [{"admin_id": aid, "name": admin_name_map.get(aid, "Admin"), "revenue": round(v, 2)}
+             for aid, v in admin_revenue_map.items()],
+            key=lambda x: x["revenue"],
+            reverse=True
+        )[:5]
         
         return {
             "total_passengers": passengers.count or 0,
@@ -749,7 +1147,13 @@ async def get_superadmin_stats(current_user: dict = Depends(get_current_user)):
             "total_rides": len(rides.data or []),
             "completed_rides": completed_rides,
             "pending_drivers": pending_drivers,
-            "total_revenue": total_revenue
+            "total_revenue": total_revenue,
+            "direct_revenue": direct_revenue,
+            "admin_revenue": admin_revenue,
+            "revenue_7d": build_daily_series(7),
+            "revenue_30d": build_daily_series(30),
+            "top_cities": top_cities,
+            "top_admins": top_admins
         }
     except Exception as e:
         logger.error(f"Stats error: {e}")
@@ -760,7 +1164,7 @@ async def get_superadmin_stats(current_user: dict = Depends(get_current_user)):
 @api_router.post("/cities")
 async def create_city(data: CityCreate, current_user: dict = Depends(get_current_user)):
     """Create a new city"""
-    if current_user['user_type'] not in ['superadmin', 'admin']:
+    if current_user['user_type'] != 'superadmin':
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
@@ -787,10 +1191,199 @@ async def get_cities():
         logger.error(f"Get cities error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.delete("/cities/{city_id}")
+async def delete_city(city_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a city"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    try:
+        result = supabase.table("cities").delete().eq("id", city_id).execute()
+        if result.data:
+            return {"success": True}
+        raise HTTPException(status_code=404, detail="City not found")
+    except Exception as e:
+        logger.error(f"City delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/pricing")
+async def get_pricing(scope: str = Query(...), current_user: dict = Depends(get_current_user)):
+    """Get pricing settings by scope (direct/admin)"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if scope not in ['direct', 'admin']:
+        raise HTTPException(status_code=400, detail="Invalid scope")
+    
+    try:
+        result = supabase.table("pricing_settings").select("*").eq("scope", scope).execute()
+        pricing = result.data[0] if result.data else {
+            "scope": scope,
+            "base_fare": 0,
+            "price_per_km": 0,
+            "price_per_min": 0,
+            "commission_rate": 0
+        }
+        return {"pricing": pricing}
+    except Exception as e:
+        logger.error(f"Pricing get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/pricing")
+async def update_pricing(scope: str = Query(...), data: PricingUpdate = None, current_user: dict = Depends(get_current_user)):
+    """Update pricing settings by scope (direct/admin)"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if scope not in ['direct', 'admin']:
+        raise HTTPException(status_code=400, detail="Invalid scope")
+    
+    try:
+        if data is None:
+            raise HTTPException(status_code=400, detail="Pricing data required")
+        if data.base_fare < 0 or data.price_per_km < 0 or data.price_per_min < 0:
+            raise HTTPException(status_code=400, detail="Prices must be >= 0")
+        if data.commission_rate is not None and (data.commission_rate < 0 or data.commission_rate > 100):
+            raise HTTPException(status_code=400, detail="Commission must be between 0 and 100")
+        payload = {
+            "scope": scope,
+            "base_fare": data.base_fare,
+            "price_per_km": data.price_per_km,
+            "price_per_min": data.price_per_min,
+            "commission_rate": data.commission_rate if data.commission_rate is not None else 0,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        result = supabase.table("pricing_settings").upsert(payload, on_conflict="scope").execute()
+        pricing = result.data[0] if result.data else payload
+        return {"pricing": pricing}
+    except Exception as e:
+        logger.error(f"Pricing update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/pricing")
+async def get_admin_pricing(current_user: dict = Depends(get_current_user)):
+    """Get admin pricing (global, not per city)"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        result = supabase.table("admins").select(
+            "base_fare,price_per_km,price_per_min,surge_multiplier,commission_rate"
+        ).eq("id", current_user['user_id']).execute()
+        pricing = result.data[0] if result.data else {
+            "base_fare": 0,
+            "price_per_km": 0,
+            "price_per_min": 0,
+            "surge_multiplier": 1.0,
+            "commission_rate": 0
+        }
+        return {"pricing": pricing}
+    except Exception as e:
+        logger.error(f"Admin pricing get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/admin/pricing")
+async def update_admin_pricing(data: AdminPricingUpdate, current_user: dict = Depends(get_current_user)):
+    """Update admin pricing (global, not per city)"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if data.base_fare < 0 or data.price_per_km < 0 or data.price_per_min < 0:
+        raise HTTPException(status_code=400, detail="Prices must be >= 0")
+    if data.commission_rate < 0 or data.commission_rate > 100:
+        raise HTTPException(status_code=400, detail="Commission must be between 0 and 100")
+    if data.surge_multiplier < 1:
+        raise HTTPException(status_code=400, detail="Surge must be >= 1")
+    try:
+        payload = {
+            "base_fare": data.base_fare,
+            "price_per_km": data.price_per_km,
+            "price_per_min": data.price_per_min,
+            "surge_multiplier": data.surge_multiplier,
+            "commission_rate": data.commission_rate,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        result = supabase.table("admins").update(payload).eq("id", current_user['user_id']).execute()
+        if result.data:
+            return {"pricing": result.data[0]}
+        raise HTTPException(status_code=404, detail="Admin not found")
+    except Exception as e:
+        logger.error(f"Admin pricing update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/admin/payment-methods")
+async def get_admin_payment_methods(current_user: dict = Depends(get_current_user)):
+    """Get admin payment methods"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        result = supabase.table("admin_payment_methods").select("*").eq("admin_id", current_user['user_id']).execute()
+        if result.data:
+            methods = result.data[0]
+        else:
+            # Create default record
+            payload = {
+                "admin_id": current_user['user_id'],
+                "moncash_enabled": False,
+                "natcash_enabled": False,
+                "bank_enabled": False
+            }
+            created = supabase.table("admin_payment_methods").insert(payload).execute()
+            methods = created.data[0] if created.data else payload
+        return {"payment_methods": methods}
+    except Exception as e:
+        logger.error(f"Admin payment methods get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/admin/payment-methods")
+async def update_admin_payment_methods(data: AdminPaymentMethodsUpdate, current_user: dict = Depends(get_current_user)):
+    """Update admin payment methods"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if data.moncash_enabled and not (data.moncash_phone and data.moncash_phone.strip()):
+        raise HTTPException(status_code=400, detail="MonCash phone required")
+    if data.natcash_enabled and not (data.natcash_phone and data.natcash_phone.strip()):
+        raise HTTPException(status_code=400, detail="NatCash phone required")
+    if data.bank_enabled:
+        if not (data.bank_name and data.bank_name.strip()):
+            raise HTTPException(status_code=400, detail="Bank name required")
+        if not (data.bank_account_name and data.bank_account_name.strip()):
+            raise HTTPException(status_code=400, detail="Account name required")
+        if not (data.bank_account_number and data.bank_account_number.strip()):
+            raise HTTPException(status_code=400, detail="Account number required")
+    if data.default_method:
+        if data.default_method not in ['moncash', 'natcash', 'bank']:
+            raise HTTPException(status_code=400, detail="Invalid default method")
+        if data.default_method == 'moncash' and not data.moncash_enabled:
+            raise HTTPException(status_code=400, detail="MonCash must be enabled for default")
+        if data.default_method == 'natcash' and not data.natcash_enabled:
+            raise HTTPException(status_code=400, detail="NatCash must be enabled for default")
+        if data.default_method == 'bank' and not data.bank_enabled:
+            raise HTTPException(status_code=400, detail="Bank must be enabled for default")
+    try:
+        payload = {
+            "moncash_enabled": data.moncash_enabled,
+            "moncash_phone": data.moncash_phone,
+            "natcash_enabled": data.natcash_enabled,
+            "natcash_phone": data.natcash_phone,
+            "bank_enabled": data.bank_enabled,
+            "bank_name": data.bank_name,
+            "bank_account_name": data.bank_account_name,
+            "bank_account_number": data.bank_account_number,
+            "default_method": data.default_method,
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        result = supabase.table("admin_payment_methods").update(payload).eq("admin_id", current_user['user_id']).execute()
+        if result.data:
+            return {"payment_methods": result.data[0]}
+        # create if missing
+        payload["admin_id"] = current_user['user_id']
+        created = supabase.table("admin_payment_methods").insert(payload).execute()
+        return {"payment_methods": created.data[0] if created.data else payload}
+    except Exception as e:
+        logger.error(f"Admin payment methods update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.put("/cities/{city_id}")
 async def update_city(city_id: str, data: CityUpdate, current_user: dict = Depends(get_current_user)):
     """Update city pricing"""
-    if current_user['user_type'] not in ['superadmin', 'admin']:
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
@@ -811,9 +1404,10 @@ async def get_drivers(status: Optional[str] = None, city: Optional[str] = None, 
     try:
         query = supabase.table("drivers").select("*")
         
-        if current_user['user_type'] == 'admin':
+        if current_user['user_type'] in ['admin', 'subadmin']:
             # Get admin's cities
-            admin = supabase.table("admins").select("cities").eq("id", current_user['user_id']).execute()
+            admin_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
+            admin = supabase.table("admins").select("cities").eq("id", admin_id).execute()
             if admin.data:
                 admin_cities = admin.data[0].get('cities', [])
                 if admin_cities:
@@ -837,19 +1431,51 @@ async def get_drivers(status: Optional[str] = None, city: Optional[str] = None, 
 
 @api_router.put("/drivers/{driver_id}/approve")
 async def approve_driver(driver_id: str, current_user: dict = Depends(get_current_user)):
-    """Approve a driver"""
-    if current_user['user_type'] not in ['superadmin', 'admin']:
+    """Approve a driver (after document verification)"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
+        driver_result = supabase.table("drivers").select(
+            "license_photo,vehicle_photo,vehicle_papers"
+        ).eq("id", driver_id).execute()
+        if not driver_result.data:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        driver = driver_result.data[0]
+        if not driver.get('license_photo') or not driver.get('vehicle_photo') or not driver.get('vehicle_papers'):
+            raise HTTPException(status_code=400, detail="Missing driver documents")
+
+        admin_id = None
+        if current_user['user_type'] == 'admin':
+            admin_id = current_user['user_id']
+        if current_user['user_type'] == 'subadmin':
+            admin_id = current_user.get('admin_id')
+
         update_data = {
             "status": "approved",
             "is_verified": True,
-            "admin_id": current_user['user_id'] if current_user['user_type'] == 'admin' else None
+            "document_status": "approved",
+            "rejection_reason": None,
+            "admin_id": admin_id,
+            "verified_at": datetime.utcnow().isoformat(),
+            "verified_by": current_user['user_id']
         }
         
         result = supabase.table("drivers").update(update_data).eq("id", driver_id).execute()
         if result.data:
+            supabase.table("driver_verifications").insert({
+                "id": str(uuid.uuid4()),
+                "driver_id": driver_id,
+                "status": "approved",
+                "reason": None,
+                "verified_by": current_user['user_id']
+            }).execute()
+            create_notification(
+                driver_id,
+                "driver",
+                "Dokiman apwouve",
+                "Dokiman ou yo apwouve. Ou kapab kòmanse fè kous."
+            )
             return {"success": True, "message": "Driver approved"}
         raise HTTPException(status_code=404, detail="Driver not found")
     except Exception as e:
@@ -857,15 +1483,38 @@ async def approve_driver(driver_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.put("/drivers/{driver_id}/reject")
-async def reject_driver(driver_id: str, reason: str = "Documents not valid", current_user: dict = Depends(get_current_user)):
-    """Reject a driver"""
-    if current_user['user_type'] not in ['superadmin', 'admin']:
+async def reject_driver(
+    driver_id: str,
+    reason: str = Query(..., min_length=5),
+    current_user: dict = Depends(get_current_user)
+):
+    """Reject a driver (with reason)"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
-        result = supabase.table("drivers").update({"status": "rejected"}).eq("id", driver_id).execute()
+        result = supabase.table("drivers").update({
+            "status": "rejected",
+            "document_status": "rejected",
+            "rejection_reason": reason,
+            "verified_at": datetime.utcnow().isoformat(),
+            "verified_by": current_user['user_id']
+        }).eq("id", driver_id).execute()
         if result.data:
-            return {"success": True, "message": "Driver rejected"}
+            supabase.table("driver_verifications").insert({
+                "id": str(uuid.uuid4()),
+                "driver_id": driver_id,
+                "status": "rejected",
+                "reason": reason,
+                "verified_by": current_user['user_id']
+            }).execute()
+            create_notification(
+                driver_id,
+                "driver",
+                "Dokiman rejte",
+                f"Dokiman ou yo rejte. Rezon: {reason}"
+            )
+            return {"success": True, "message": "Driver rejected", "reason": reason}
         raise HTTPException(status_code=404, detail="Driver not found")
     except Exception as e:
         logger.error(f"Driver rejection error: {e}")
@@ -905,23 +1554,98 @@ async def update_driver_location(driver_id: str, location: LocationUpdate, curre
         logger.error(f"Location update error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.post("/admin/drivers")
+async def create_driver_by_admin(data: AdminDriverCreate, current_user: dict = Depends(get_current_user)):
+    """Admin creates a driver manually"""
+    if current_user['user_type'] != 'admin':
+        raise HTTPException(status_code=403, detail="Only Admin can create drivers")
+    
+    try:
+        existing = supabase.table("drivers").select("id").or_(f"phone.eq.{data.phone},email.eq.{data.email}").execute()
+        if existing.data:
+            raise HTTPException(status_code=400, detail="Phone or email already registered")
+        
+        driver_data = {
+            "id": str(uuid.uuid4()),
+            "full_name": data.full_name,
+            "phone": data.phone,
+            "email": data.email,
+            "city": data.city,
+            "password_hash": hash_password(data.password),
+            "vehicle_type": data.vehicle_type,
+            "vehicle_brand": data.vehicle_brand,
+            "vehicle_model": data.vehicle_model,
+            "plate_number": data.plate_number,
+            "vehicle_photo": data.vehicle_photo,
+            "license_photo": data.license_photo,
+            "vehicle_papers": data.vehicle_papers,
+            "profile_photo": data.profile_photo,
+            "status": "pending",
+            "is_online": False,
+            "is_verified": False,
+            "is_active": True,
+            "rating": 5.0,
+            "total_rides": 0,
+            "wallet_balance": 0,
+            "admin_id": current_user['user_id']
+        }
+        
+        result = supabase.table("drivers").insert(driver_data).execute()
+        if result.data:
+            driver = result.data[0]
+            driver.pop('password_hash', None)
+            return {"success": True, "driver": driver}
+        raise HTTPException(status_code=500, detail="Driver creation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Admin create driver error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/drivers/{driver_id}/verifications")
+async def get_driver_verifications(driver_id: str, current_user: dict = Depends(get_current_user)):
+    """Get driver verification history"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    try:
+        result = supabase.table("driver_verifications").select("*").eq("driver_id", driver_id).order("created_at", desc=True).execute()
+        return {"verifications": result.data or []}
+    except Exception as e:
+        logger.error(f"Driver verifications error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/notifications")
+async def get_notifications(current_user: dict = Depends(get_current_user)):
+    """Get current user notifications"""
+    try:
+        result = supabase.table("notifications").select("*").eq("user_id", current_user['user_id']).eq("user_type", current_user['user_type']).order("created_at", desc=True).execute()
+        return {"notifications": result.data or []}
+    except Exception as e:
+        logger.error(f"Notifications error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============== PASSENGER ENDPOINTS ==============
 
 @api_router.get("/passengers")
-async def get_passengers(city: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def get_passengers(
+    city: Optional[str] = None,
+    admin_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
     """Get passengers"""
-    if current_user['user_type'] not in ['superadmin', 'admin']:
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
         query = supabase.table("passengers").select("*")
         
         if current_user['user_type'] == 'admin':
-            admin = supabase.table("admins").select("cities").eq("id", current_user['user_id']).execute()
-            if admin.data:
-                admin_cities = admin.data[0].get('cities', [])
-                if admin_cities:
-                    query = query.in_("city", admin_cities)
+            query = query.eq("admin_id", current_user['user_id'])
+        elif current_user['user_type'] == 'subadmin':
+            query = query.eq("admin_id", current_user.get('admin_id'))
+        elif admin_id:
+            query = query.eq("admin_id", admin_id)
         
         if city:
             query = query.eq("city", city)
@@ -935,6 +1659,201 @@ async def get_passengers(city: Optional[str] = None, current_user: dict = Depend
         return {"passengers": passengers}
     except Exception as e:
         logger.error(f"Get passengers error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/passengers/{passenger_id}/status")
+async def set_passenger_status(
+    passenger_id: str,
+    is_active: bool,
+    current_user: dict = Depends(get_current_user)
+):
+    """Enable/disable a passenger"""
+    if current_user['user_type'] not in ['superadmin', 'admin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    try:
+        passenger = supabase.table("passengers").select("id,admin_id").eq("id", passenger_id).execute()
+        if not passenger.data:
+            raise HTTPException(status_code=404, detail="Passenger not found")
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_id = current_user['user_id'] if current_user['user_type'] == 'admin' else current_user.get('admin_id')
+            if passenger.data[0].get("admin_id") != admin_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+        
+        result = supabase.table("passengers").update({
+            "is_active": is_active,
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", passenger_id).execute()
+        if result.data:
+            title = "Kont ou aktive" if is_active else "Kont ou sispann"
+            body = "Kont ou aktive ankò." if is_active else "Kont ou sispann pou kounye a."
+            create_notification(passenger_id, "passenger", title, body)
+            return {"success": True, "is_active": is_active}
+        raise HTTPException(status_code=404, detail="Passenger not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Passenger status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.delete("/passengers/{passenger_id}")
+async def delete_passenger(passenger_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a passenger"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    try:
+        passenger = supabase.table("passengers").select("id,admin_id").eq("id", passenger_id).execute()
+        if not passenger.data:
+            raise HTTPException(status_code=404, detail="Passenger not found")
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_id = current_user['user_id'] if current_user['user_type'] == 'admin' else current_user.get('admin_id')
+            if passenger.data[0].get("admin_id") != admin_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+        result = supabase.table("passengers").delete().eq("id", passenger_id).execute()
+        if result.data:
+            return {"success": True}
+        raise HTTPException(status_code=404, detail="Passenger not found")
+    except Exception as e:
+        logger.error(f"Passenger delete error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/passengers/{passenger_id}/warn")
+async def warn_passenger(
+    passenger_id: str,
+    payload: Dict[str, Any],
+    current_user: dict = Depends(get_current_user)
+):
+    """Send warning message to passenger"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    message = (payload or {}).get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    
+    try:
+        passenger = supabase.table("passengers").select("id,admin_id").eq("id", passenger_id).execute()
+        if not passenger.data:
+            raise HTTPException(status_code=404, detail="Passenger not found")
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_id = current_user['user_id'] if current_user['user_type'] == 'admin' else current_user.get('admin_id')
+            if passenger.data[0].get("admin_id") != admin_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+        
+        create_notification(
+            passenger_id,
+            "passenger",
+            "Avertisman",
+            message
+        )
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Passenger warn error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============== COMPLAINTS ==============
+
+@api_router.post("/complaints")
+async def create_complaint(data: ComplaintCreate, current_user: dict = Depends(get_current_user)):
+    """Create a complaint (driver/passenger only)"""
+    if current_user['user_type'] not in ['driver', 'passenger']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if data.target_user_type not in ['driver', 'passenger']:
+        raise HTTPException(status_code=400, detail="Invalid target type")
+    if data.target_user_type == current_user['user_type']:
+        raise HTTPException(status_code=400, detail="Target must be different user type")
+    message = (data.message or '').strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    
+    try:
+        target_table = "drivers" if data.target_user_type == "driver" else "passengers"
+        target = supabase.table(target_table).select("id,admin_id").eq("id", data.target_user_id).execute()
+        if not target.data:
+            raise HTTPException(status_code=404, detail="Target user not found")
+        admin_id = target.data[0].get("admin_id")
+        
+        payload = {
+            "id": str(uuid.uuid4()),
+            "ride_id": data.ride_id,
+            "admin_id": admin_id,
+            "from_user_type": current_user['user_type'],
+            "from_user_id": current_user['user_id'],
+            "target_user_type": data.target_user_type,
+            "target_user_id": data.target_user_id,
+            "message": message,
+            "status": "open"
+        }
+        result = supabase.table("complaints").insert(payload).execute()
+        if result.data:
+            return {"complaint": result.data[0]}
+        raise HTTPException(status_code=500, detail="Complaint creation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Complaint create error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get("/complaints")
+async def get_complaints(current_user: dict = Depends(get_current_user)):
+    """Get complaints for admin/superadmin/subadmin"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        query = supabase.table("complaints").select("*").order("created_at", desc=True)
+        if current_user['user_type'] == 'admin':
+            query = query.eq("admin_id", current_user['user_id'])
+        if current_user['user_type'] == 'subadmin':
+            query = query.eq("admin_id", current_user.get('admin_id'))
+        result = query.execute()
+        complaints = result.data or []
+        if current_user['user_type'] == 'superadmin' and complaints:
+          admins = supabase.table("admins").select("id,brand_name,full_name").execute()
+          admin_map = {a["id"]: (a.get("brand_name") or a.get("full_name") or "Mak Pèsonèl") for a in (admins.data or [])}
+          for c in complaints:
+              c["admin_name"] = admin_map.get(c.get("admin_id"))
+        return {"complaints": complaints}
+    except Exception as e:
+        logger.error(f"Complaints get error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/complaints/{complaint_id}/resolve")
+async def resolve_complaint(
+    complaint_id: str,
+    payload: Optional[Dict[str, Any]] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Resolve a complaint"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        complaint = supabase.table("complaints").select("id,admin_id,from_user_id,from_user_type").eq("id", complaint_id).execute()
+        if not complaint.data:
+            raise HTTPException(status_code=404, detail="Complaint not found")
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_id = current_user['user_id'] if current_user['user_type'] == 'admin' else current_user.get('admin_id')
+            if complaint.data[0].get("admin_id") != admin_id:
+                raise HTTPException(status_code=403, detail="Not authorized")
+        result = supabase.table("complaints").update({
+            "status": "resolved"
+        }).eq("id", complaint_id).execute()
+        if result.data:
+            message = (payload or {}).get("message", "").strip()
+            create_notification(
+                complaint.data[0]["from_user_id"],
+                complaint.data[0]["from_user_type"],
+                "Plent rezoud",
+                message or "Plent ou a rezoud. Mesi."
+            )
+            return {"complaint": result.data[0]}
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Complaint resolve error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============== RIDE ENDPOINTS ==============
@@ -970,9 +1889,19 @@ async def get_nearby_drivers(lat: float, lng: float, vehicle_type: str, city: st
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/rides/estimate")
-async def estimate_ride(data: RideRequest):
+async def estimate_ride(
+    data: RideRequest,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
+):
     """Get ride price estimate"""
     try:
+        current_user = None
+        if credentials:
+            try:
+                current_user = decode_token(credentials.credentials)
+            except Exception:
+                current_user = None
+
         # Get city pricing
         city_result = supabase.table("cities").select("*").execute()
         cities = city_result.data or []
@@ -987,12 +1916,27 @@ async def estimate_ride(data: RideRequest):
             'price_per_min_car': 10,
             'surge_multiplier': 1.0
         }
+
+        pricing_data = None
+        if current_user and current_user.get('user_type') == 'passenger':
+            passenger = supabase.table("passengers").select("admin_id").eq("id", current_user['user_id']).execute()
+            admin_id = passenger.data[0].get('admin_id') if passenger.data else None
+            if admin_id:
+                admin_pricing = supabase.table("admins").select(
+                    "base_fare,price_per_km,price_per_min,surge_multiplier"
+                ).eq("id", admin_id).execute()
+                if admin_pricing.data:
+                    pricing_data = admin_pricing.data[0]
+            else:
+                pricing_result = supabase.table("pricing_settings").select("*").eq("scope", "direct").execute()
+                if pricing_result.data:
+                    pricing_data = pricing_result.data[0]
         
         pricing = calculate_ride_price(
             city_data,
-            data.vehicle_type,
             data.estimated_distance,
-            data.estimated_duration
+            data.estimated_duration,
+            pricing_data
         )
         
         return {
@@ -1010,6 +1954,8 @@ async def create_ride(data: RideRequest, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=403, detail="Only passengers can request rides")
     
     try:
+        passenger = supabase.table("passengers").select("admin_id").eq("id", current_user['user_id']).execute()
+        admin_id = passenger.data[0].get('admin_id') if passenger.data else None
         ride_data = {
             "id": str(uuid.uuid4()),
             "passenger_id": current_user['user_id'],
@@ -1024,7 +1970,8 @@ async def create_ride(data: RideRequest, current_user: dict = Depends(get_curren
             "estimated_duration": data.estimated_duration,
             "estimated_price": data.estimated_price,
             "status": "pending",
-            "payment_method": "cash"
+            "payment_method": "cash",
+            "admin_id": admin_id
         }
         
         result = supabase.table("rides").insert(ride_data).execute()
@@ -1185,6 +2132,7 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
             'passenger': 'passengers',
             'driver': 'drivers',
             'admin': 'admins',
+            'subadmin': 'subadmins',
             'superadmin': 'superadmins'
         }
         
@@ -1199,6 +2147,69 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
         logger.error(f"Get profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/profile/password")
+async def change_password(data: PasswordChange, current_user: dict = Depends(get_current_user)):
+    """Change current user password"""
+    try:
+        table_map = {
+            'passenger': 'passengers',
+            'driver': 'drivers',
+            'admin': 'admins',
+            'subadmin': 'subadmins',
+            'superadmin': 'superadmins'
+        }
+        table = table_map.get(current_user['user_type'])
+        result = supabase.table(table).select("password_hash").eq("id", current_user['user_id']).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="User not found")
+        hashed = result.data[0].get('password_hash')
+        if not verify_password(data.current_password, hashed):
+            raise HTTPException(status_code=400, detail="Invalid current password")
+        supabase.table(table).update({
+            "password_hash": hash_password(data.new_password),
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", current_user['user_id']).execute()
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Change password error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.put("/profile")
+async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_current_user)):
+    """Update current user profile"""
+    try:
+        table_map = {
+            'passenger': 'passengers',
+            'driver': 'drivers',
+            'admin': 'admins',
+            'superadmin': 'superadmins'
+        }
+        table = table_map.get(current_user['user_type'])
+        allowed_fields = {'full_name', 'email', 'phone'}
+        if current_user['user_type'] == 'admin':
+            allowed_fields.add('logo')
+        update_data = {k: v for k, v in (data or {}).items() if k in allowed_fields}
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        for key, value in update_data.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                raise HTTPException(status_code=400, detail=f"{key} is required")
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+        result = supabase.table(table).update(update_data).eq("id", current_user['user_id']).execute()
+        if result.data:
+            user = result.data[0]
+            user.pop('password_hash', None)
+            user['user_type'] = current_user['user_type']
+            return {"user": user}
+        raise HTTPException(status_code=404, detail="User not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update profile error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Include the router in the main app

@@ -29,20 +29,20 @@ export default function SuperAdminLayout() {
         }}
       />
       <Tabs.Screen
-        name="admins"
+        name="white-label"
         options={{
-          title: 'Admins',
+          title: 'White Label',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people" size={size} color={color} />
+            <Ionicons name="color-palette" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="cities"
+        name="admins"
         options={{
-          title: 'Vil',
+          title: 'Administratè',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="location" size={size} color={color} />
+            <Ionicons name="people" size={size} color={color} />
           ),
         }}
       />
@@ -52,6 +52,15 @@ export default function SuperAdminLayout() {
           title: 'Chofè',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="car" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="passengers"
+        options={{
+          title: 'Pasajè',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person" size={size} color={color} />
           ),
         }}
       />

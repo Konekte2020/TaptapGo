@@ -9,8 +9,13 @@ import {
   Alert,
   RefreshControl,
   Image,
+  Modal,
+  TextInput,
+  ScrollView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { driverAPI } from '../../src/services/api';
 
@@ -18,6 +23,31 @@ export default function AdminDrivers() {
   const [drivers, setDrivers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [docModalVisible, setDocModalVisible] = useState(false);
+  const [selectedDriver, setSelectedDriver] = useState<any>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [verifications, setVerifications] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [zoomVisible, setZoomVisible] = useState(false);
+  const [zoomImage, setZoomImage] = useState('');
+  const [driverForm, setDriverForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    city: '',
+    password: '',
+    vehicle_type: 'car',
+    vehicle_brand: '',
+    vehicle_model: '',
+    plate_number: '',
+    profile_photo: '',
+    license_photo: '',
+    vehicle_photo: '',
+    vehicle_papers: '',
+  });
 
   useEffect(() => {
     fetchDrivers();
@@ -36,50 +66,170 @@ export default function AdminDrivers() {
     }
   };
 
-  const handleApprove = async (driverId: string) => {
+  const openDocModal = (driver: any) => {
+    setSelectedDriver(driver);
+    setRejectReason('');
+    setDocModalVisible(true);
+  };
+
+  const closeDocModal = () => {
+    setDocModalVisible(false);
+    setSelectedDriver(null);
+    setRejectReason('');
+  };
+
+  const resetDriverForm = () => {
+    setDriverForm({
+      full_name: '',
+      email: '',
+      phone: '',
+      city: '',
+      password: '',
+      vehicle_type: 'car',
+      vehicle_brand: '',
+      vehicle_model: '',
+      plate_number: '',
+      profile_photo: '',
+      license_photo: '',
+      vehicle_photo: '',
+      vehicle_papers: '',
+    });
+  };
+
+  const pickImage = async (field: string) => {
+    if (Platform.OS !== 'web') {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè pou chwazi foto.');
+        return;
+      }
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.6,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets[0].base64) {
+      setDriverForm({
+        ...driverForm,
+        [field]: `data:image/jpeg;base64,${result.assets[0].base64}`,
+      });
+    } else if (!result.canceled && result.assets[0].uri) {
+      setDriverForm({
+        ...driverForm,
+        [field]: result.assets[0].uri,
+      });
+    }
+  };
+
+  const openZoom = (uri: string) => {
+    setZoomImage(uri);
+    setZoomVisible(true);
+  };
+
+  const clearImage = (field: string) => {
     Alert.alert(
-      'Apwouve Chofè',
-      'Ou sèten ou vle apwouve chofè sa a?',
+      'Efase foto',
+      'Ou vle efase foto sa a nèt?',
       [
         { text: 'Non', style: 'cancel' },
         {
-          text: 'Wi',
-          onPress: async () => {
-            try {
-              await driverAPI.approve(driverId);
-              Alert.alert('Siksè', 'Chofè apwouve ak asiye nan flot ou!');
-              fetchDrivers();
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab apwouve');
-            }
+          text: 'Wi, efase',
+          style: 'destructive',
+          onPress: () => {
+            setDriverForm({
+              ...driverForm,
+              [field]: '',
+            });
           },
         },
       ]
     );
   };
 
-  const handleReject = async (driverId: string) => {
-    Alert.alert(
-      'Rejte Chofè',
-      'Ou sèten ou vle rejte chofè sa a?',
-      [
-        { text: 'Non', style: 'cancel' },
-        {
-          text: 'Wi',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await driverAPI.reject(driverId);
-              Alert.alert('Siksè', 'Chofè rejte');
-              fetchDrivers();
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab rejte');
-            }
-          },
-        },
-      ]
-    );
+  const handleCreateDriver = async () => {
+    const required = [
+      driverForm.full_name,
+      driverForm.email,
+      driverForm.phone,
+      driverForm.city,
+      driverForm.password,
+      driverForm.vehicle_type,
+      driverForm.vehicle_brand,
+      driverForm.vehicle_model,
+      driverForm.plate_number,
+    ];
+    if (required.some((v) => !v || !String(v).trim())) {
+      Alert.alert('Erè', 'Tanpri ranpli tout chan yo');
+      return;
+    }
+    setCreating(true);
+    try {
+      await driverAPI.createByAdmin(driverForm);
+      Alert.alert('Siksè', 'Chofè a ajoute. Li an atant verifikasyon.');
+      setAddModalVisible(false);
+      resetDriverForm();
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab ajoute chofè');
+    } finally {
+      setCreating(false);
+    }
   };
+
+  const handleApprove = async () => {
+    if (!selectedDriver) return;
+    setSubmitting(true);
+    try {
+      await driverAPI.approve(selectedDriver.id);
+      Alert.alert('Siksè', 'Chofè apwouve ak asiye nan flot ou!');
+      closeDocModal();
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab apwouve');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!selectedDriver) return;
+    if (!rejectReason || rejectReason.trim().length < 5) {
+      Alert.alert('Erè', 'Tanpri mete yon rezon (min 5 karaktè).');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await driverAPI.reject(selectedDriver.id, rejectReason.trim());
+      Alert.alert('Siksè', 'Chofè rejte');
+      closeDocModal();
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab rejte');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!selectedDriver || !docModalVisible) return;
+      setHistoryLoading(true);
+      try {
+        const response = await driverAPI.getVerifications(selectedDriver.id);
+        setVerifications(response.data.verifications || []);
+      } catch (error) {
+        console.error('Fetch verifications error:', error);
+        setVerifications([]);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+    loadHistory();
+  }, [selectedDriver, docModalVisible]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -152,18 +302,11 @@ export default function AdminDrivers() {
       {item.status === 'pending' && (
         <View style={styles.actionButtons}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.rejectButton]}
-            onPress={() => handleReject(item.id)}
+            style={[styles.actionButton, styles.verifyButton]}
+            onPress={() => openDocModal(item)}
           >
-            <Ionicons name="close" size={18} color={Colors.error} />
-            <Text style={[styles.actionText, { color: Colors.error }]}>Rejte</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.approveButton]}
-            onPress={() => handleApprove(item.id)}
-          >
-            <Ionicons name="checkmark" size={18} color="white" />
-            <Text style={[styles.actionText, { color: 'white' }]}>Apwouve</Text>
+            <Ionicons name="document-text" size={18} color="white" />
+            <Text style={[styles.actionText, { color: 'white' }]}>Verifye dokiman</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -180,6 +323,9 @@ export default function AdminDrivers() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Flot Chofè</Text>
+        <TouchableOpacity style={styles.addButton} onPress={() => setAddModalVisible(true)}>
+          <Ionicons name="add" size={22} color="white" />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.filterContainer}>
@@ -211,6 +357,317 @@ export default function AdminDrivers() {
           </View>
         }
       />
+
+      <Modal
+        visible={docModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closeDocModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={closeDocModal}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Dokiman Chofè</Text>
+            <View style={styles.modalSpacer} />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <Text style={styles.modalName}>
+              {selectedDriver?.full_name || 'Chofè'}
+            </Text>
+            <Text style={styles.modalMeta}>
+              {selectedDriver?.phone || '—'} · {selectedDriver?.email || '—'}
+            </Text>
+
+            <View style={styles.docGrid}>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Foto Lisans</Text>
+                {selectedDriver?.license_photo ? (
+                  <Image source={{ uri: selectedDriver.license_photo }} style={styles.docImage} />
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+              </View>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Foto Veyikil</Text>
+                {selectedDriver?.vehicle_photo ? (
+                  <Image source={{ uri: selectedDriver.vehicle_photo }} style={styles.docImage} />
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+              </View>
+              <View style={styles.docCard}>
+                <Text style={styles.docLabel}>Papye Veyikil</Text>
+                {selectedDriver?.vehicle_papers ? (
+                  <Image source={{ uri: selectedDriver.vehicle_papers }} style={styles.docImage} />
+                ) : (
+                  <Text style={styles.docMissing}>Dokiman manke</Text>
+                )}
+              </View>
+            </View>
+
+            <Text style={styles.historyTitle}>Istwa Verifikasyon</Text>
+            {historyLoading ? (
+              <Text style={styles.historyEmpty}>Ap chaje...</Text>
+            ) : verifications.length === 0 ? (
+              <Text style={styles.historyEmpty}>Pa gen istwa</Text>
+            ) : (
+              verifications.map((v) => (
+                <View key={v.id} style={styles.historyRow}>
+                  <Text style={styles.historyStatus}>
+                    {v.status === 'approved' ? 'Apwouve' : 'Rejte'}
+                  </Text>
+                  <Text style={styles.historyReason}>
+                    {v.reason || '—'}
+                  </Text>
+                  <Text style={styles.historyDate}>
+                    {String(v.created_at || '').slice(0, 10)}
+                  </Text>
+                </View>
+              ))
+            )}
+
+            <Text style={styles.formLabel}>Rezon pou rejte</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Ekri rezon lan"
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalReject]}
+                onPress={handleReject}
+                disabled={submitting}
+              >
+                <Text style={styles.modalButtonText}>Rejte</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalApprove]}
+                onPress={handleApprove}
+                disabled={submitting}
+              >
+                <Text style={styles.modalButtonText}>Apwouve</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={addModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setAddModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setAddModalVisible(false)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Ajoute Chofè</Text>
+            <TouchableOpacity onPress={handleCreateDriver} disabled={creating}>
+              <Text style={styles.saveButton}>{creating ? 'Ap sove...' : 'Kreye'}</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <TextInput
+              style={styles.input}
+              placeholder="Non konplè"
+              value={driverForm.full_name}
+              onChangeText={(text) => setDriverForm({ ...driverForm, full_name: text })}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              value={driverForm.email}
+              onChangeText={(text) => setDriverForm({ ...driverForm, email: text })}
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Telefòn"
+              value={driverForm.phone}
+              onChangeText={(text) => setDriverForm({ ...driverForm, phone: text })}
+              keyboardType="phone-pad"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Vil"
+              value={driverForm.city}
+              onChangeText={(text) => setDriverForm({ ...driverForm, city: text })}
+            />
+            <View style={styles.typeRow}>
+              <TouchableOpacity
+                style={[
+                  styles.typeButton,
+                  driverForm.vehicle_type === 'car' && styles.typeButtonActive,
+                ]}
+                onPress={() => setDriverForm({ ...driverForm, vehicle_type: 'car' })}
+              >
+                <Text
+                  style={[
+                    styles.typeText,
+                    driverForm.vehicle_type === 'car' && styles.typeTextActive,
+                  ]}
+                >
+                  Machin
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.typeButton,
+                  driverForm.vehicle_type === 'moto' && styles.typeButtonActive,
+                ]}
+                onPress={() => setDriverForm({ ...driverForm, vehicle_type: 'moto' })}
+              >
+                <Text
+                  style={[
+                    styles.typeText,
+                    driverForm.vehicle_type === 'moto' && styles.typeTextActive,
+                  ]}
+                >
+                  Moto
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Mak machin"
+              value={driverForm.vehicle_brand}
+              onChangeText={(text) => setDriverForm({ ...driverForm, vehicle_brand: text })}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Modèl machin"
+              value={driverForm.vehicle_model}
+              onChangeText={(text) => setDriverForm({ ...driverForm, vehicle_model: text })}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Plak"
+              value={driverForm.plate_number}
+              onChangeText={(text) => setDriverForm({ ...driverForm, plate_number: text })}
+            />
+            <Text style={styles.sectionLabel}>Dokiman Chofè</Text>
+            <View style={styles.uploadGrid}>
+              <View style={styles.uploadCard}>
+                {driverForm.profile_photo ? (
+                  <>
+                    <TouchableOpacity onPress={() => openZoom(driverForm.profile_photo)}>
+                      <Image source={{ uri: driverForm.profile_photo }} style={styles.uploadImage} />
+                    </TouchableOpacity>
+                    <View style={styles.uploadActions}>
+                      <TouchableOpacity onPress={() => pickImage('profile_photo')}>
+                        <Text style={styles.uploadChange}>Chanje Foto</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => clearImage('profile_photo')}>
+                        <Text style={styles.uploadRemove}>Efase</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => pickImage('profile_photo')} style={styles.uploadEmpty}>
+                    <Ionicons name="person-circle-outline" size={26} color={Colors.textSecondary} />
+                    <Text style={styles.uploadText}>Foto Profil</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.uploadCard}>
+                {driverForm.license_photo ? (
+                  <>
+                    <TouchableOpacity onPress={() => openZoom(driverForm.license_photo)}>
+                      <Image source={{ uri: driverForm.license_photo }} style={styles.uploadImage} />
+                    </TouchableOpacity>
+                    <View style={styles.uploadActions}>
+                      <TouchableOpacity onPress={() => pickImage('license_photo')}>
+                        <Text style={styles.uploadChange}>Chanje Lisans</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => clearImage('license_photo')}>
+                        <Text style={styles.uploadRemove}>Efase</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => pickImage('license_photo')} style={styles.uploadEmpty}>
+                    <Ionicons name="card-outline" size={26} color={Colors.textSecondary} />
+                    <Text style={styles.uploadText}>Lisans</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.uploadCard}>
+                {driverForm.vehicle_photo ? (
+                  <>
+                    <TouchableOpacity onPress={() => openZoom(driverForm.vehicle_photo)}>
+                      <Image source={{ uri: driverForm.vehicle_photo }} style={styles.uploadImage} />
+                    </TouchableOpacity>
+                    <View style={styles.uploadActions}>
+                      <TouchableOpacity onPress={() => pickImage('vehicle_photo')}>
+                        <Text style={styles.uploadChange}>Chanje Foto</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => clearImage('vehicle_photo')}>
+                        <Text style={styles.uploadRemove}>Efase</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => pickImage('vehicle_photo')} style={styles.uploadEmpty}>
+                    <Ionicons name="car-outline" size={26} color={Colors.textSecondary} />
+                    <Text style={styles.uploadText}>Foto Veyikil</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.uploadCard}>
+                {driverForm.vehicle_papers ? (
+                  <>
+                    <TouchableOpacity onPress={() => openZoom(driverForm.vehicle_papers)}>
+                      <Image source={{ uri: driverForm.vehicle_papers }} style={styles.uploadImage} />
+                    </TouchableOpacity>
+                    <View style={styles.uploadActions}>
+                      <TouchableOpacity onPress={() => pickImage('vehicle_papers')}>
+                        <Text style={styles.uploadChange}>Chanje Papye</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => clearImage('vehicle_papers')}>
+                        <Text style={styles.uploadRemove}>Efase</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => pickImage('vehicle_papers')} style={styles.uploadEmpty}>
+                    <Ionicons name="document-outline" size={26} color={Colors.textSecondary} />
+                    <Text style={styles.uploadText}>Papye Veyikil</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Modpas tanporè"
+              value={driverForm.password}
+              onChangeText={(text) => setDriverForm({ ...driverForm, password: text })}
+              secureTextEntry
+            />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={zoomVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setZoomVisible(false)}
+      >
+        <View style={styles.zoomOverlay}>
+          <TouchableOpacity style={styles.zoomClose} onPress={() => setZoomVisible(false)}>
+            <Ionicons name="close" size={28} color="white" />
+          </TouchableOpacity>
+          <Image source={{ uri: zoomImage }} style={styles.zoomImage} resizeMode="contain" />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -223,6 +680,9 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingBottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: {
     fontSize: 24,
@@ -234,6 +694,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     gap: 8,
+  },
+  addButton: {
+    backgroundColor: Colors.primary,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   filterButton: {
     paddingHorizontal: 16,
@@ -363,15 +831,235 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
   },
-  rejectButton: {
-    backgroundColor: Colors.surface,
-  },
-  approveButton: {
-    backgroundColor: Colors.success,
+  verifyButton: {
+    backgroundColor: Colors.primary,
   },
   actionText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  modalSpacer: {
+    width: 24,
+  },
+  modalContent: {
+    padding: 20,
+    gap: 12,
+  },
+  modalName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  modalMeta: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  docGrid: {
+    gap: 12,
+  },
+  docCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+  },
+  docLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  docImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
+    backgroundColor: Colors.background,
+  },
+  docMissing: {
+    fontSize: 12,
+    color: Colors.error,
+  },
+  formLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: Colors.background,
+    color: Colors.text,
+    minHeight: 60,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalReject: {
+    backgroundColor: Colors.error,
+  },
+  modalApprove: {
+    backgroundColor: Colors.success,
+  },
+  modalButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  historyTitle: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 8,
+  },
+  historyRow: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 8,
+  },
+  historyStatus: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  historyReason: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  historyDate: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  historyEmpty: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 6,
+  },
+  saveButton: {
+    fontSize: 16,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  typeRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  typeButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  typeButtonActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  typeText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  typeTextActive: {
+    color: 'white',
+  },
+  sectionLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  uploadGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  uploadCard: {
+    width: '48%',
+    minHeight: 120,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
+    padding: 8,
+  },
+  uploadEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  uploadImage: {
+    width: '100%',
+    height: 100,
+    borderRadius: 8,
+  },
+  uploadText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  uploadChange: {
+    marginTop: 6,
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  uploadActions: {
+    marginTop: 6,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  uploadRemove: {
+    fontSize: 12,
+    color: Colors.error,
+    fontWeight: '600',
+  },
+  zoomOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  zoomClose: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 2,
+  },
+  zoomImage: {
+    width: '100%',
+    height: '80%',
   },
   emptyContainer: {
     alignItems: 'center',

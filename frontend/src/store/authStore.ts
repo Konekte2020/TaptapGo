@@ -7,7 +7,7 @@ interface User {
   phone: string;
   email: string;
   city: string;
-  user_type: 'passenger' | 'driver' | 'admin' | 'superadmin';
+  user_type: 'passenger' | 'driver' | 'admin' | 'subadmin' | 'superadmin';
   profile_photo?: string;
   status?: string;
   vehicle_type?: string;

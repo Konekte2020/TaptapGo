@@ -195,6 +195,14 @@ export default function SuperAdminDrivers() {
           <Ionicons name="location" size={14} color={Colors.textSecondary} />
           <Text style={styles.detailText}>{item.city}</Text>
         </View>
+        {item.admin_name && (
+          <View style={styles.detailItem}>
+            <Ionicons name="shield-checkmark" size={14} color={Colors.textSecondary} />
+            <Text style={styles.detailText}>
+              {item.admin_brand ? `${item.admin_brand}` : item.admin_name}
+            </Text>
+          </View>
+        )}
         <View style={styles.detailItem}>
           <Ionicons name="card" size={14} color={Colors.textSecondary} />
           <Text style={styles.detailText}>{item.plate_number}</Text>

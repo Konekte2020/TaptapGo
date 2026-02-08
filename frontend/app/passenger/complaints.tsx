@@ -11,8 +11,10 @@ import {
 } from 'react-native';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { complaintsAPI, rideAPI } from '../../src/services/api';
+import { useAuthStore } from '../../src/store/authStore';
 
 export default function PassengerComplaints() {
+  const { user } = useAuthStore();
   const [rides, setRides] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRide, setSelectedRide] = useState<any>(null);
@@ -26,7 +28,9 @@ export default function PassengerComplaints() {
     setLoading(true);
     try {
       const response = await rideAPI.getAll();
-      setRides(response.data.rides || []);
+      const allRides = response.data.rides || [];
+      const filtered = user ? allRides.filter((ride: any) => ride.passenger_id === user.id) : [];
+      setRides(filtered);
     } catch (error) {
       console.error('Fetch rides error:', error);
     } finally {
@@ -67,6 +71,9 @@ export default function PassengerComplaints() {
       onPress={() => setSelectedRide(item)}
     >
       <Text style={styles.rideTitle}>Kous: {String(item.id).slice(0, 8)}</Text>
+      <Text style={styles.rideMeta} numberOfLines={1}>
+        {item.pickup_address || 'Pickup'} ➜ {item.destination_address || 'Destinasyon'}
+      </Text>
       <Text style={styles.rideMeta}>Status: {item.status}</Text>
       <Text style={styles.rideMeta}>Dat: {String(item.created_at || '').slice(0, 10)}</Text>
     </TouchableOpacity>
@@ -93,6 +100,11 @@ export default function PassengerComplaints() {
       />
 
       <View style={styles.form}>
+        {selectedRide && (
+          <Text style={styles.selectedRideText}>
+            Kous chwazi: {String(selectedRide.id).slice(0, 8)}
+          </Text>
+        )}
         <Text style={styles.formLabel}>Ekri plent lan</Text>
         <TextInput
           style={styles.input}
@@ -161,6 +173,11 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 12,
     color: Colors.textSecondary,
+    marginBottom: 6,
+  },
+  selectedRideText: {
+    fontSize: 12,
+    color: Colors.primary,
     marginBottom: 6,
   },
   input: {

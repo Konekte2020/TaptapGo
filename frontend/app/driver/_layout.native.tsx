@@ -22,7 +22,7 @@ export default function DriverLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: 'Akuy',
+          title: 'Akèy',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
           ),
@@ -73,6 +73,11 @@ export default function DriverLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="edit-profile" options={{ href: null }} />
+      <Tabs.Screen name="vehicle-info" options={{ href: null }} />
+      <Tabs.Screen name="documents" options={{ href: null }} />
+      <Tabs.Screen name="pending" options={{ href: null }} />
+      <Tabs.Screen name="help" options={{ href: null }} />
     </Tabs>
   );
 }

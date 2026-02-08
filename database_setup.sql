@@ -13,12 +13,26 @@ CREATE TABLE IF NOT EXISTS passengers (
     city TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     profile_photo TEXT,
+    moncash_enabled BOOLEAN DEFAULT FALSE,
+    moncash_phone TEXT,
+    natcash_enabled BOOLEAN DEFAULT FALSE,
+    natcash_phone TEXT,
     wallet_balance DECIMAL DEFAULT 0,
     is_verified BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Add payment method columns if table already exists
+ALTER TABLE passengers
+  ADD COLUMN IF NOT EXISTS moncash_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE passengers
+  ADD COLUMN IF NOT EXISTS moncash_phone TEXT;
+ALTER TABLE passengers
+  ADD COLUMN IF NOT EXISTS natcash_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE passengers
+  ADD COLUMN IF NOT EXISTS natcash_phone TEXT;
 
 -- Drivers table
 CREATE TABLE IF NOT EXISTS drivers (
@@ -31,6 +45,7 @@ CREATE TABLE IF NOT EXISTS drivers (
     vehicle_type TEXT NOT NULL,
     vehicle_brand TEXT NOT NULL,
     vehicle_model TEXT NOT NULL,
+    vehicle_color TEXT,
     plate_number TEXT UNIQUE NOT NULL,
     vehicle_photo TEXT,
     license_photo TEXT,
@@ -45,6 +60,15 @@ CREATE TABLE IF NOT EXISTS drivers (
     rating DECIMAL DEFAULT 5.0,
     total_rides INTEGER DEFAULT 0,
     wallet_balance DECIMAL DEFAULT 0,
+    moncash_enabled BOOLEAN DEFAULT FALSE,
+    moncash_phone TEXT,
+    natcash_enabled BOOLEAN DEFAULT FALSE,
+    natcash_phone TEXT,
+    bank_enabled BOOLEAN DEFAULT FALSE,
+    bank_name TEXT,
+    bank_account_name TEXT,
+    bank_account_number TEXT,
+    default_method TEXT,
     admin_id UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -62,11 +86,14 @@ CREATE TABLE IF NOT EXISTS admins (
     logo TEXT,
     primary_color TEXT DEFAULT '#E53935',
     secondary_color TEXT DEFAULT '#1E3A5F',
+    tertiary_color TEXT DEFAULT '#F4B400',
     commission_rate DECIMAL DEFAULT 10,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS tertiary_color TEXT DEFAULT '#F4B400';
 
 -- SuperAdmins table
 CREATE TABLE IF NOT EXISTS superadmins (
@@ -110,6 +137,11 @@ CREATE TABLE IF NOT EXISTS rides (
     destination_address TEXT NOT NULL,
     vehicle_type TEXT NOT NULL,
     status TEXT DEFAULT 'pending',
+    scheduled_at TIMESTAMP WITH TIME ZONE,
+    assigned_at TIMESTAMP WITH TIME ZONE,
+    driver_eta_minutes INTEGER,
+    contact_code TEXT,
+    contact_active BOOLEAN DEFAULT FALSE,
     estimated_distance DECIMAL,
     estimated_duration DECIMAL,
     estimated_price DECIMAL,
@@ -127,6 +159,40 @@ CREATE TABLE IF NOT EXISTS rides (
     cancelled_at TIMESTAMP WITH TIME ZONE,
     cancel_reason TEXT
 );
+
+-- Add driver vehicle color column if table already exists
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS vehicle_color TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS moncash_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS moncash_phone TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS natcash_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS natcash_phone TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS bank_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS bank_name TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS bank_account_name TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS bank_account_number TEXT;
+ALTER TABLE drivers
+  ADD COLUMN IF NOT EXISTS default_method TEXT;
+
+-- Add ride assignment/contact columns if table already exists
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS driver_eta_minutes INTEGER;
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS contact_code TEXT;
+ALTER TABLE rides
+  ADD COLUMN IF NOT EXISTS contact_active BOOLEAN DEFAULT FALSE;
 
 -- OTP codes table
 CREATE TABLE IF NOT EXISTS otp_codes (
@@ -174,6 +240,16 @@ ALTER TABLE favorite_addresses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 
 -- Create policies to allow access (for development - tighten in production)
+DROP POLICY IF EXISTS "Allow all access to passengers" ON passengers;
+DROP POLICY IF EXISTS "Allow all access to drivers" ON drivers;
+DROP POLICY IF EXISTS "Allow all access to admins" ON admins;
+DROP POLICY IF EXISTS "Allow all access to superadmins" ON superadmins;
+DROP POLICY IF EXISTS "Allow all access to cities" ON cities;
+DROP POLICY IF EXISTS "Allow all access to rides" ON rides;
+DROP POLICY IF EXISTS "Allow all access to otp_codes" ON otp_codes;
+DROP POLICY IF EXISTS "Allow all access to favorite_addresses" ON favorite_addresses;
+DROP POLICY IF EXISTS "Allow all access to transactions" ON transactions;
+
 CREATE POLICY "Allow all access to passengers" ON passengers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to drivers" ON drivers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to admins" ON admins FOR ALL USING (true) WITH CHECK (true);

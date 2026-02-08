@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Alert,
   Switch,
   Dimensions,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -16,12 +17,22 @@ import { useAuthStore } from '../../src/store/authStore';
 import { driverAPI } from '../../src/services/api';
 
 const { width } = Dimensions.get('window');
+const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
 
 export default function DriverHome() {
   const { user, updateUser } = useAuthStore();
   const [isOnline, setIsOnline] = useState(user?.is_online || false);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [pendingRides, setPendingRides] = useState<any[]>([]);
+
+  const mapImageUrl = useMemo(() => {
+    const lat = location?.coords.latitude ?? 18.5944;
+    const lng = location?.coords.longitude ?? -72.3074;
+    if (MAPBOX_TOKEN) {
+      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff3b30(${lng},${lat})/${lng},${lat},14,0/600x300?access_token=${MAPBOX_TOKEN}`;
+    }
+    return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=14&size=600x300&markers=${lat},${lng},red-pushpin`;
+  }, [location]);
 
   useEffect(() => {
     if (isOnline) {
@@ -51,6 +62,14 @@ export default function DriverHome() {
 
   const toggleOnlineStatus = async () => {
     const newStatus = !isOnline;
+
+    if (newStatus && user?.status !== 'approved') {
+      Alert.alert(
+        'Erè',
+        'Kont ou an poko apwouve. Kontakte sèvis sipò si ou panse tan an twòp.'
+      );
+      return;
+    }
     
     try {
       if (user?.id) {
@@ -105,15 +124,10 @@ export default function DriverHome() {
 
         {/* Map Placeholder */}
         <View style={styles.mapPlaceholder}>
-          <Ionicons name="map" size={60} color={Colors.textSecondary} />
+          <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
           <Text style={styles.mapText}>
             {isOnline ? 'Ap tann demann kous...' : 'Ale online pou resevwa kous'}
           </Text>
-          {location && (
-            <Text style={styles.coordsText}>
-              {location.coords.latitude.toFixed(4)}, {location.coords.longitude.toFixed(4)}
-            </Text>
-          )}
         </View>
 
         {/* Quick Stats */}
@@ -230,17 +244,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     minHeight: 200,
+    overflow: 'hidden',
+  },
+  mapImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   mapText: {
     fontSize: 16,
     color: Colors.textSecondary,
     marginTop: 12,
     textAlign: 'center',
-  },
-  coordsText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 8,
   },
   statsContainer: {
     flexDirection: 'row',

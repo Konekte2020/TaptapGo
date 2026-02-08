@@ -45,13 +45,6 @@ export default function RoleSelect() {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={styles.adminLink}
-          onPress={() => router.push('/auth/login?type=admin')}
-        >
-          <Ionicons name="shield" size={20} color={Colors.textSecondary} />
-          <Text style={styles.adminText}>Konekte kòm Admin</Text>
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -69,8 +62,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: {
-    width: 200,
-    height: 80,
+    width: 300,
+    height: 120,
     marginBottom: 30,
   },
   title: {
@@ -110,16 +103,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   optionDesc: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-  },
-  adminLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 40,
-    gap: 8,
-  },
-  adminText: {
     fontSize: 14,
     color: Colors.textSecondary,
   },

@@ -1,8 +1,23 @@
 import axios from 'axios/dist/browser/axios.cjs';
 import type { InternalAxiosRequestConfig } from 'axios';
+import { Platform } from 'react-native';
 import { useAuthStore } from '../store/authStore';
 
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const DEFAULT_ANDROID_URL = 'http://10.0.2.2:8000';
+const DEFAULT_IOS_URL = 'http://localhost:8000';
+
+const baseUrlFromEnv = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const androidUrl = process.env.EXPO_PUBLIC_BACKEND_URL_ANDROID || '';
+const iosUrl = process.env.EXPO_PUBLIC_BACKEND_URL_IOS || '';
+const nativeUrl = process.env.EXPO_PUBLIC_BACKEND_URL_NATIVE || '';
+const webUrl = process.env.EXPO_PUBLIC_BACKEND_URL_WEB || '';
+
+const API_URL =
+  Platform.OS === 'android'
+    ? androidUrl || nativeUrl || DEFAULT_ANDROID_URL || baseUrlFromEnv
+    : Platform.OS === 'ios'
+      ? iosUrl || nativeUrl || DEFAULT_IOS_URL || baseUrlFromEnv
+      : webUrl || baseUrlFromEnv;
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
@@ -104,7 +119,8 @@ export const rideAPI = {
   create: (data: any) => api.post('/rides', data),
   getAll: (status?: string) => api.get('/rides', { params: { status } }),
   accept: (id: string) => api.put(`/rides/${id}/accept`),
-  updateStatus: (id: string, status: string) => api.put(`/rides/${id}/status`, { status }),
+  updateStatus: (id: string, status: string, reason?: string) =>
+    api.put(`/rides/${id}/status`, { status, reason }),
   rate: (id: string, rating: number, comment?: string) => api.post(`/rides/${id}/rate`, { rating, comment }),
 };
 
@@ -137,7 +153,35 @@ export const profileAPI = {
   get: () => api.get('/profile'),
   changePassword: (current_password: string, new_password: string) =>
     api.post('/profile/password', { current_password, new_password }),
-  update: (data: { full_name?: string; email?: string; phone?: string }) =>
+  update: (data: {
+    full_name?: string;
+    email?: string;
+    phone?: string;
+    city?: string;
+    profile_photo?: string;
+    brand_name?: string;
+    logo?: string;
+    primary_color?: string;
+    secondary_color?: string;
+    tertiary_color?: string;
+    vehicle_type?: string;
+    vehicle_brand?: string;
+    vehicle_model?: string;
+    vehicle_color?: string;
+    plate_number?: string;
+    vehicle_photo?: string;
+    license_photo?: string;
+    vehicle_papers?: string;
+    moncash_enabled?: boolean;
+    moncash_phone?: string;
+    natcash_enabled?: boolean;
+    natcash_phone?: string;
+    bank_enabled?: boolean;
+    bank_name?: string;
+    bank_account_name?: string;
+    bank_account_number?: string;
+    default_method?: string;
+  }) =>
     api.put('/profile', data),
 };
 
@@ -184,6 +228,11 @@ export const complaintsAPI = {
   create: (data: { target_user_type: 'driver' | 'passenger'; target_user_id: string; message: string; ride_id?: string }) =>
     api.post('/complaints', data),
   resolve: (id: string, message?: string) => api.put(`/complaints/${id}/resolve`, { message }),
+};
+
+export const ridesAPI = {
+  cancel: (id: string, reason?: string) =>
+    api.put(`/rides/${id}/status`, { status: 'cancelled', reason }),
 };
 
 export default api;

@@ -7,10 +7,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
-import { rideAPI } from '../../src/services/api';
+import { rideAPI, ridesAPI } from '../../src/services/api';
 
 export default function PassengerRides() {
   const [rides, setRides] = useState<any[]>([]);
@@ -39,6 +40,7 @@ export default function PassengerRides() {
       case 'completed': return Colors.success;
       case 'cancelled': return Colors.error;
       case 'pending': return Colors.warning;
+      case 'scheduled': return Colors.secondary;
       case 'accepted': return Colors.secondary;
       case 'started': return Colors.primary;
       default: return Colors.textSecondary;
@@ -50,10 +52,33 @@ export default function PassengerRides() {
       case 'completed': return 'Fini';
       case 'cancelled': return 'Anile';
       case 'pending': return 'An atant';
+      case 'scheduled': return 'Pwograme';
       case 'accepted': return 'Aksepte';
       case 'started': return 'An wout';
       default: return status;
     }
+  };
+
+  const handleCancel = (rideId: string) => {
+    Alert.alert(
+      'Anile kous',
+      'Ou sèten ou vle anile kous sa a?',
+      [
+        { text: 'Non', style: 'cancel' },
+        {
+          text: 'Wi',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await ridesAPI.cancel(rideId, 'Cancelled by passenger');
+              fetchRides();
+            } catch (error: any) {
+              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab anile kous la');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const renderRide = ({ item }: { item: any }) => (
@@ -94,12 +119,20 @@ export default function PassengerRides() {
           {item.final_price || item.estimated_price || 0} HTG
         </Text>
       </View>
+
+      {item.status === 'pending' && (
+        <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancel(item.id)}>
+          <Ionicons name="close-circle" size={18} color="white" />
+          <Text style={styles.cancelButtonText}>Anile Kous</Text>
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 
   const filters = [
     { key: 'all', label: 'Tout' },
     { key: 'pending', label: 'An atant' },
+    { key: 'scheduled', label: 'Pwograme' },
     { key: 'completed', label: 'Fini' },
     { key: 'cancelled', label: 'Anile' },
   ];
@@ -258,6 +291,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: Colors.primary,
+  },
+  cancelButton: {
+    marginTop: 10,
+    backgroundColor: Colors.error,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontWeight: '600',
   },
   emptyContainer: {
     alignItems: 'center',

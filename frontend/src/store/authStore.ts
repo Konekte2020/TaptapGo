@@ -11,15 +11,33 @@ interface User {
   profile_photo?: string;
   status?: string;
   vehicle_type?: string;
+  vehicle_brand?: string;
+  vehicle_model?: string;
+  vehicle_color?: string;
+  plate_number?: string;
+  vehicle_photo?: string;
+  license_photo?: string;
+  vehicle_papers?: string;
   is_online?: boolean;
   rating?: number;
+  total_rides?: number;
   wallet_balance?: number;
+  moncash_enabled?: boolean;
+  moncash_phone?: string;
+  natcash_enabled?: boolean;
+  natcash_phone?: string;
+  bank_enabled?: boolean;
+  bank_name?: string;
+  bank_account_name?: string;
+  bank_account_number?: string;
+  default_method?: string;
   // Admin fields
   cities?: string[];
   brand_name?: string;
   logo?: string;
   primary_color?: string;
   secondary_color?: string;
+  tertiary_color?: string;
 }
 
 interface AuthState {

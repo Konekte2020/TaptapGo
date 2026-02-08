@@ -27,6 +27,8 @@ export default function SuperAdminAdmins() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingAdmin, setEditingAdmin] = useState<any>(null);
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
   const [form, setForm] = useState({
     full_name: '',
     email: '',
@@ -65,21 +67,25 @@ export default function SuperAdminAdmins() {
   const isBrandAdmin = !!editingAdmin?.brand_name;
 
   const handleSaveAdmin = async () => {
-    if (!form.full_name || !form.email || !form.phone || !form.address || (!editingAdmin && !form.password)) {
-      Alert.alert('Erè', 'Tanpri ranpli tout chan obligatwa yo');
+    setFormError('');
+    if (!form.full_name || !form.email || !form.phone || (!editingAdmin && !form.password)) {
+      const message = 'Tanpri ranpli tout chan obligatwa yo';
+      setFormError(message);
+      Alert.alert('Erè', message);
       return;
     }
 
+    setSaving(true);
     try {
       if (editingAdmin) {
         const updatePayload: any = {
           full_name: form.full_name,
           email: form.email,
           phone: form.phone,
-          address: form.address,
+          address: form.address || undefined,
           force_password_change: form.force_password_change,
         };
-        if (isBrandAdmin) {
+        if (isBrandAdmin || form.brand_name || selectedCities.length > 0) {
           updatePayload.brand_name = form.brand_name;
           updatePayload.primary_color = form.primary_color;
           updatePayload.secondary_color = form.secondary_color;
@@ -88,21 +94,32 @@ export default function SuperAdminAdmins() {
         await adminAPI.updateAdmin(editingAdmin.id, updatePayload);
         Alert.alert('Siksè', 'Admin modifye!');
       } else {
-        await adminAPI.createAdmin({
+        const createPayload: any = {
           full_name: form.full_name,
           email: form.email,
           phone: form.phone,
-          address: form.address,
+          address: form.address || undefined,
           password: form.password,
           force_password_change: form.force_password_change,
-        });
+        };
+        if (form.brand_name || selectedCities.length > 0) {
+          createPayload.brand_name = form.brand_name;
+          createPayload.primary_color = form.primary_color;
+          createPayload.secondary_color = form.secondary_color;
+          createPayload.cities = selectedCities;
+        }
+        await adminAPI.createAdmin(createPayload);
         Alert.alert('Siksè', 'Admin kreye!');
       }
       setModalVisible(false);
       resetForm();
       fetchAdmins();
     } catch (error: any) {
-      Alert.alert('Erè', error.response?.data?.detail || 'Operasyon echwe');
+      const message = error.response?.data?.detail || 'Operasyon echwe';
+      setFormError(message);
+      Alert.alert('Erè', message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -182,6 +199,7 @@ export default function SuperAdminAdmins() {
     });
     setSelectedCities([]);
     setEditingAdmin(null);
+    setFormError('');
   };
 
   const toggleCity = (city: string) => {
@@ -312,12 +330,19 @@ export default function SuperAdminAdmins() {
             <Text style={styles.modalTitle}>
               {editingAdmin ? 'Modifye Admin' : 'Kreye Admin'}
             </Text>
-            <TouchableOpacity onPress={handleSaveAdmin}>
-              <Text style={styles.saveButton}>
-                {editingAdmin ? 'Sove' : 'Kreye'}
+            <TouchableOpacity onPress={handleSaveAdmin} disabled={saving}>
+              <Text style={[styles.saveButton, saving && styles.saveButtonDisabled]}>
+                {saving ? 'Ap sove...' : (editingAdmin ? 'Sove' : 'Kreye')}
               </Text>
             </TouchableOpacity>
           </View>
+
+          {!!formError && (
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={16} color={Colors.error} />
+              <Text style={styles.errorText}>{formError}</Text>
+            </View>
+          )}
 
           <ScrollView style={styles.modalContent}>
             <Text style={styles.formLabel}>Enfòmasyon</Text>
@@ -586,6 +611,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: 12,
+    flex: 1,
+  },
   modalTitle: {
     fontSize: 18,
     fontWeight: '600',
@@ -595,6 +632,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.primary,
     fontWeight: '600',
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
   modalContent: {
     flex: 1,

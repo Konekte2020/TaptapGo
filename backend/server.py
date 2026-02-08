@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timedelta
+import random
 import jwt
 import bcrypt
 import base64
@@ -55,6 +56,22 @@ def create_notification(user_id: str, user_type: str, title: str, body: str):
     except Exception as e:
         logger.error(f"Notification error: {e}")
 
+
+def calculate_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Rough distance in km for nearby matching"""
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    return ((dlat ** 2 + dlng ** 2) ** 0.5) * 111
+
+
+def estimate_eta_minutes(distance_km: float) -> int:
+    """Simple ETA estimate"""
+    return max(2, int(round(distance_km * 3)))
+
+
+def generate_contact_code() -> str:
+    return ''.join(str(random.randint(0, 9)) for _ in range(6))
+
 # ============== PYDANTIC MODELS ==============
 
 # Auth Models
@@ -75,6 +92,7 @@ class UserRegisterDriver(BaseModel):
     vehicle_type: str  # 'moto' or 'car'
     vehicle_brand: str
     vehicle_model: str
+    vehicle_color: Optional[str] = None
     plate_number: str
     vehicle_photo: Optional[str] = None  # base64
     license_photo: Optional[str] = None  # base64
@@ -90,6 +108,7 @@ class AdminDriverCreate(BaseModel):
     vehicle_type: str
     vehicle_brand: str
     vehicle_model: str
+    vehicle_color: Optional[str] = None
     plate_number: str
     vehicle_photo: Optional[str] = None
     license_photo: Optional[str] = None
@@ -131,6 +150,7 @@ class AdminCreate(BaseModel):
     logo: Optional[str] = None  # base64
     primary_color: Optional[str] = "#E53935"
     secondary_color: Optional[str] = "#1E3A5F"
+    tertiary_color: Optional[str] = "#F4B400"
 
 class AdminUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -143,6 +163,7 @@ class AdminUpdate(BaseModel):
     logo: Optional[str] = None  # base64
     primary_color: Optional[str] = None
     secondary_color: Optional[str] = None
+    tertiary_color: Optional[str] = None
     commission_rate: Optional[float] = None
     is_active: Optional[bool] = None
 
@@ -220,9 +241,12 @@ class RideRequest(BaseModel):
     estimated_distance: float  # km
     estimated_duration: float  # minutes
     estimated_price: float
+    scheduled_at: Optional[str] = None
+    payment_method: Optional[str] = "cash"
 
 class RideStatusUpdate(BaseModel):
     status: str  # 'accepted', 'arrived', 'started', 'completed', 'cancelled'
+    reason: Optional[str] = None
 
 class RideRating(BaseModel):
     rating: int  # 1-5
@@ -413,6 +437,7 @@ async def init_database():
             logo TEXT,
             primary_color TEXT DEFAULT '#E53935',
             secondary_color TEXT DEFAULT '#1E3A5F',
+            tertiary_color TEXT DEFAULT '#F4B400',
             commission_rate DECIMAL DEFAULT 10,
             base_fare DECIMAL DEFAULT 0,
             price_per_km DECIMAL DEFAULT 0,
@@ -666,7 +691,6 @@ async def register_passenger(data: UserRegisterPassenger):
             "city": data.city,
             "password_hash": hash_password(data.password),
             "profile_photo": data.profile_photo,
-            "admin_id": data.admin_id,
             "wallet_balance": 0,
             "is_verified": True,  # Set to True after OTP in production
             "is_active": True
@@ -717,6 +741,7 @@ async def register_driver(data: UserRegisterDriver):
             "vehicle_type": data.vehicle_type,
             "vehicle_brand": data.vehicle_brand,
             "vehicle_model": data.vehicle_model,
+            "vehicle_color": data.vehicle_color,
             "plate_number": data.plate_number,
             "vehicle_photo": data.vehicle_photo,
             "license_photo": data.license_photo,
@@ -793,15 +818,6 @@ async def login(data: LoginRequest):
         
         if not user.get('is_active', True):
             raise HTTPException(status_code=403, detail="Account is disabled")
-        
-        # For drivers, check approval status
-        if data.user_type == 'driver' and user.get('status') != 'approved':
-            return {
-                "success": False,
-                "message": f"Account is {user.get('status')}. Please wait for admin approval.",
-                "status": user.get('status'),
-                "reason": user.get('rejection_reason')
-            }
         
         admin_id = (
             user.get('admin_id') if data.user_type in ['driver', 'subadmin']
@@ -888,6 +904,7 @@ async def create_admin(data: AdminCreate, current_user: dict = Depends(get_curre
             "logo": data.logo,
             "primary_color": data.primary_color,
             "secondary_color": data.secondary_color,
+            "tertiary_color": data.tertiary_color,
             "is_active": True
         }
         
@@ -1046,6 +1063,46 @@ async def delete_admin(admin_id: str, current_user: dict = Depends(get_current_u
         raise HTTPException(status_code=403, detail="Only SuperAdmin can delete admins")
     
     try:
+        admin_lookup = supabase.table("admins").select("id,brand_name").eq("id", admin_id).execute()
+        if not admin_lookup.data:
+            raise HTTPException(status_code=404, detail="Admin not found")
+
+        admin_brand_name = admin_lookup.data[0].get("brand_name")
+
+        # If it's a white-label brand, remove everything linked to it.
+        if admin_brand_name:
+            drivers = supabase.table("drivers").select("id").eq("admin_id", admin_id).execute()
+            passengers = supabase.table("passengers").select("id").eq("admin_id", admin_id).execute()
+            driver_ids = [d.get("id") for d in (drivers.data or []) if d.get("id")]
+            passenger_ids = [p.get("id") for p in (passengers.data or []) if p.get("id")]
+
+            if driver_ids:
+                supabase.table("driver_verifications").delete().in_("driver_id", driver_ids).execute()
+                supabase.table("notifications").delete().in_("user_id", driver_ids).execute()
+
+            if passenger_ids:
+                supabase.table("notifications").delete().in_("user_id", passenger_ids).execute()
+
+            supabase.table("rides").delete().eq("admin_id", admin_id).execute()
+            if driver_ids:
+                supabase.table("rides").delete().in_("driver_id", driver_ids).execute()
+            if passenger_ids:
+                supabase.table("rides").delete().in_("passenger_id", passenger_ids).execute()
+
+            supabase.table("complaints").delete().eq("admin_id", admin_id).execute()
+            if driver_ids:
+                supabase.table("complaints").delete().in_("from_user_id", driver_ids).execute()
+                supabase.table("complaints").delete().in_("target_user_id", driver_ids).execute()
+            if passenger_ids:
+                supabase.table("complaints").delete().in_("from_user_id", passenger_ids).execute()
+                supabase.table("complaints").delete().in_("target_user_id", passenger_ids).execute()
+            supabase.table("notifications").delete().eq("user_id", admin_id).execute()
+
+            supabase.table("admin_payment_methods").delete().eq("admin_id", admin_id).execute()
+            supabase.table("subadmins").delete().eq("admin_id", admin_id).execute()
+            supabase.table("drivers").delete().eq("admin_id", admin_id).execute()
+            supabase.table("passengers").delete().eq("admin_id", admin_id).execute()
+
         result = supabase.table("admins").delete().eq("id", admin_id).execute()
         if result.data:
             return {"success": True}
@@ -1403,24 +1460,45 @@ async def get_drivers(status: Optional[str] = None, city: Optional[str] = None, 
     """Get drivers (filtered by admin's cities if admin)"""
     try:
         query = supabase.table("drivers").select("*")
-        
+
+        admin_id = None
+        admin_cities: List[str] = []
+        admin_brand_name = None
         if current_user['user_type'] in ['admin', 'subadmin']:
-            # Get admin's cities
             admin_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
-            admin = supabase.table("admins").select("cities").eq("id", admin_id).execute()
+            admin = supabase.table("admins").select("cities,brand_name").eq("id", admin_id).execute()
             if admin.data:
-                admin_cities = admin.data[0].get('cities', [])
-                if admin_cities:
-                    query = query.in_("city", admin_cities)
-        
+                admin_cities = admin.data[0].get('cities', []) or []
+                admin_brand_name = admin.data[0].get('brand_name')
+
         if status:
             query = query.eq("status", status)
         if city:
             query = query.eq("city", city)
-        
+
+        if admin_cities:
+            query = query.in_("city", admin_cities)
+
         result = query.execute()
         drivers = result.data or []
-        
+
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            # White-label admins only see their own drivers.
+            # TapTapGo admins see unassigned drivers and those assigned to them.
+            if admin_brand_name:
+                drivers = [d for d in drivers if d.get('admin_id') == admin_id]
+            else:
+                drivers = [d for d in drivers if (not d.get('admin_id')) or d.get('admin_id') == admin_id]
+
+        if current_user['user_type'] == 'superadmin':
+            admins = supabase.table("admins").select("id,full_name,brand_name,cities").execute().data or []
+            admin_map = {a["id"]: a for a in admins if a.get("id")}
+            for d in drivers:
+                admin = admin_map.get(d.get("admin_id")) if d.get("admin_id") else None
+                d["admin_name"] = admin.get("full_name") if admin else None
+                d["admin_brand"] = admin.get("brand_name") if admin else None
+                d["admin_cities"] = admin.get("cities") if admin else None
+
         for driver in drivers:
             driver.pop('password_hash', None)
         
@@ -1437,7 +1515,7 @@ async def approve_driver(driver_id: str, current_user: dict = Depends(get_curren
     
     try:
         driver_result = supabase.table("drivers").select(
-            "license_photo,vehicle_photo,vehicle_papers"
+            "license_photo,vehicle_photo,vehicle_papers,city,admin_id"
         ).eq("id", driver_id).execute()
         if not driver_result.data:
             raise HTTPException(status_code=404, detail="Driver not found")
@@ -1450,6 +1528,17 @@ async def approve_driver(driver_id: str, current_user: dict = Depends(get_curren
             admin_id = current_user['user_id']
         if current_user['user_type'] == 'subadmin':
             admin_id = current_user.get('admin_id')
+
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin = supabase.table("admins").select("cities,brand_name").eq("id", admin_id).execute()
+            admin_cities = admin.data[0].get("cities", []) if admin.data else []
+            admin_brand_name = admin.data[0].get("brand_name") if admin.data else None
+            if admin_cities and driver.get("city") not in admin_cities:
+                raise HTTPException(status_code=403, detail="Driver not in your cities")
+            if admin_brand_name and not driver.get("admin_id"):
+                raise HTTPException(status_code=403, detail="Driver belongs to TapTapGo")
+            if driver.get("admin_id") and driver.get("admin_id") != admin_id:
+                raise HTTPException(status_code=403, detail="Driver belongs to another admin")
 
         update_data = {
             "status": "approved",
@@ -1527,6 +1616,16 @@ async def update_driver_online_status(driver_id: str, is_online: bool, current_u
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
+        if is_online:
+            status_lookup = supabase.table("drivers").select("status").eq("id", driver_id).execute()
+            if not status_lookup.data:
+                raise HTTPException(status_code=404, detail="Driver not found")
+            driver_status = status_lookup.data[0].get("status")
+            if driver_status != "approved":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Kont ou an poko apwouve. Kontakte sèvis sipò si ou panse tan an twòp."
+                )
         result = supabase.table("drivers").update({"is_online": is_online}).eq("id", driver_id).execute()
         if result.data:
             return {"success": True, "is_online": is_online}
@@ -1575,6 +1674,7 @@ async def create_driver_by_admin(data: AdminDriverCreate, current_user: dict = D
             "vehicle_type": data.vehicle_type,
             "vehicle_brand": data.vehicle_brand,
             "vehicle_model": data.vehicle_model,
+            "vehicle_color": data.vehicle_color,
             "plate_number": data.plate_number,
             "vehicle_photo": data.vehicle_photo,
             "license_photo": data.license_photo,
@@ -1639,11 +1739,25 @@ async def get_passengers(
     
     try:
         query = supabase.table("passengers").select("*")
-        
+
+        admin_owner_id = None
+        admin_brand_name = None
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_owner_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
+            admin = supabase.table("admins").select("brand_name").eq("id", admin_owner_id).execute()
+            if admin.data:
+                admin_brand_name = admin.data[0].get("brand_name")
+
         if current_user['user_type'] == 'admin':
-            query = query.eq("admin_id", current_user['user_id'])
+            if admin_brand_name:
+                query = query.eq("admin_id", current_user['user_id'])
+            else:
+                query = query.or_("admin_id.is.null,admin_id.eq.{0}".format(current_user['user_id']))
         elif current_user['user_type'] == 'subadmin':
-            query = query.eq("admin_id", current_user.get('admin_id'))
+            if admin_brand_name:
+                query = query.eq("admin_id", current_user.get('admin_id'))
+            else:
+                query = query.or_("admin_id.is.null,admin_id.eq.{0}".format(current_user.get('admin_id')))
         elif admin_id:
             query = query.eq("admin_id", admin_id)
         
@@ -1865,15 +1979,27 @@ async def get_nearby_drivers(lat: float, lng: float, vehicle_type: str, city: st
         query = supabase.table("drivers").select("*").eq("is_online", True).eq("status", "approved").eq("vehicle_type", vehicle_type).eq("city", city)
         result = query.execute()
         drivers = result.data or []
+
+        driver_ids = [d.get('id') for d in drivers if d.get('id')]
+        busy_driver_ids = set()
+        if driver_ids:
+            busy_rides = (
+                supabase.table("rides")
+                .select("driver_id")
+                .in_("driver_id", driver_ids)
+                .in_("status", ["pending", "accepted", "arrived", "started"])
+                .execute()
+            )
+            busy_driver_ids = {r.get('driver_id') for r in (busy_rides.data or []) if r.get('driver_id')}
         
         # Calculate distance and filter (simple distance calculation)
         nearby = []
         for driver in drivers:
+            if driver.get('id') in busy_driver_ids:
+                continue
             if driver.get('current_lat') and driver.get('current_lng'):
                 # Simple distance calculation (not accurate for large distances)
-                dlat = float(driver['current_lat']) - lat
-                dlng = float(driver['current_lng']) - lng
-                distance = (dlat**2 + dlng**2)**0.5 * 111  # rough km conversion
+                distance = calculate_distance_km(lat, lng, float(driver['current_lat']), float(driver['current_lng']))
                 
                 if distance <= 10:  # Within 10km
                     driver['distance'] = round(distance, 2)
@@ -1954,8 +2080,67 @@ async def create_ride(data: RideRequest, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=403, detail="Only passengers can request rides")
     
     try:
-        passenger = supabase.table("passengers").select("admin_id").eq("id", current_user['user_id']).execute()
+        passenger = supabase.table("passengers").select("admin_id,city").eq("id", current_user['user_id']).execute()
         admin_id = passenger.data[0].get('admin_id') if passenger.data else None
+        passenger_city = passenger.data[0].get('city') if passenger.data else None
+        matched_driver = None
+        eta_minutes = None
+        contact_code = None
+        is_scheduled = bool(data.scheduled_at)
+
+        try:
+            if is_scheduled:
+                raise Exception("Scheduled ride - skip auto assignment")
+            driver_query = (
+                supabase.table("drivers")
+                .select("*")
+                .eq("is_online", True)
+                .eq("status", "approved")
+                .eq("vehicle_type", data.vehicle_type)
+            )
+            if passenger_city:
+                driver_query = driver_query.eq("city", passenger_city)
+            driver_result = driver_query.execute()
+            drivers = driver_result.data or []
+
+            driver_ids = [d.get('id') for d in drivers if d.get('id')]
+            busy_driver_ids = set()
+            if driver_ids:
+                busy_rides = (
+                    supabase.table("rides")
+                    .select("driver_id")
+                    .in_("driver_id", driver_ids)
+                    .in_("status", ["pending", "accepted", "arrived", "started"])
+                    .execute()
+                )
+                busy_driver_ids = {r.get('driver_id') for r in (busy_rides.data or []) if r.get('driver_id')}
+
+            nearby = []
+            for driver in drivers:
+                if driver.get('id') in busy_driver_ids:
+                    continue
+                if driver.get('current_lat') and driver.get('current_lng'):
+                    distance = calculate_distance_km(
+                        data.pickup_lat,
+                        data.pickup_lng,
+                        float(driver['current_lat']),
+                        float(driver['current_lng'])
+                    )
+                    if distance <= 10:
+                        driver['distance'] = distance
+                        nearby.append(driver)
+
+            nearby.sort(key=lambda x: x.get('distance', 999))
+            if nearby:
+                matched_driver = nearby[0]
+                eta_minutes = estimate_eta_minutes(float(matched_driver.get('distance', 0)))
+                contact_code = generate_contact_code()
+        except Exception as e:
+            logger.warning(f"Auto-assign driver failed: {e}")
+
+        payment_method = data.payment_method or "cash"
+        if payment_method not in ["cash", "moncash", "natcash", "bank"]:
+            raise HTTPException(status_code=400, detail="Invalid payment method")
         ride_data = {
             "id": str(uuid.uuid4()),
             "passenger_id": current_user['user_id'],
@@ -1969,13 +2154,55 @@ async def create_ride(data: RideRequest, current_user: dict = Depends(get_curren
             "estimated_distance": data.estimated_distance,
             "estimated_duration": data.estimated_duration,
             "estimated_price": data.estimated_price,
-            "status": "pending",
-            "payment_method": "cash",
-            "admin_id": admin_id
+            "status": "scheduled" if is_scheduled else "pending",
+            "payment_method": payment_method,
+            "admin_id": admin_id,
+            "scheduled_at": data.scheduled_at
         }
+
+        if matched_driver and not is_scheduled:
+            ride_data.update({
+                "driver_id": matched_driver.get('id'),
+                "assigned_at": datetime.utcnow().isoformat(),
+                "driver_eta_minutes": eta_minutes,
+                "contact_code": contact_code,
+                "contact_active": True
+            })
         
         result = supabase.table("rides").insert(ride_data).execute()
         if result.data:
+            if matched_driver and not is_scheduled:
+                driver_name = matched_driver.get('full_name', 'Chofè')
+                vehicle_brand = matched_driver.get('vehicle_brand') or ''
+                vehicle_model = matched_driver.get('vehicle_model') or ''
+                vehicle_color = matched_driver.get('vehicle_color') or 'Pa disponib'
+                eta_text = f"{eta_minutes} min" if eta_minutes is not None else "Byen vit"
+                create_notification(
+                    current_user['user_id'],
+                    "passenger",
+                    "Chofè jwenn",
+                    f"{driver_name} ap rive nan {eta_text}. Veyikil: {vehicle_brand} {vehicle_model} (Koulè: {vehicle_color}). Kòd apèl: {contact_code}."
+                )
+                create_notification(
+                    matched_driver.get('id'),
+                    "driver",
+                    "Nouvo kous",
+                    f"Pickup: {data.pickup_address}. Destinasyon: {data.destination_address}. Kòd apèl: {contact_code}."
+                )
+                return {
+                    "success": True,
+                    "ride": result.data[0],
+                    "assigned_driver": {
+                        "id": matched_driver.get('id'),
+                        "full_name": driver_name,
+                        "vehicle_type": matched_driver.get('vehicle_type'),
+                        "vehicle_brand": vehicle_brand,
+                        "vehicle_model": vehicle_model,
+                        "vehicle_color": vehicle_color
+                    },
+                    "eta_minutes": eta_minutes,
+                    "contact_code": contact_code
+                }
             return {"success": True, "ride": result.data[0]}
         raise HTTPException(status_code=500, detail="Ride creation failed")
     except Exception as e:
@@ -2009,6 +2236,23 @@ async def accept_ride(ride_id: str, current_user: dict = Depends(get_current_use
         raise HTTPException(status_code=403, detail="Only drivers can accept rides")
     
     try:
+        ride_lookup = supabase.table("rides").select("id,driver_id,status").eq("id", ride_id).execute()
+        if not ride_lookup.data:
+            raise HTTPException(status_code=404, detail="Ride not found")
+        ride = ride_lookup.data[0]
+        if ride.get('driver_id') and ride.get('driver_id') != current_user['user_id']:
+            raise HTTPException(status_code=403, detail="Not authorized for this ride")
+
+        busy_check = (
+            supabase.table("rides")
+            .select("id")
+            .eq("driver_id", current_user['user_id'])
+            .in_("status", ["accepted", "arrived", "started"])
+            .execute()
+        )
+        if busy_check.data:
+            raise HTTPException(status_code=400, detail="Driver already has an active ride")
+
         result = supabase.table("rides").update({
             "driver_id": current_user['user_id'],
             "status": "accepted"
@@ -2031,9 +2275,30 @@ async def update_ride_status(ride_id: str, data: RideStatusUpdate, current_user:
             update_data['started_at'] = datetime.utcnow().isoformat()
         elif data.status == 'completed':
             update_data['completed_at'] = datetime.utcnow().isoformat()
+            update_data['contact_active'] = False
         elif data.status == 'cancelled':
             update_data['cancelled_at'] = datetime.utcnow().isoformat()
+            update_data['contact_active'] = False
+            if data.reason:
+                update_data['cancel_reason'] = data.reason
         
+        ride_query = supabase.table("rides").select("id,passenger_id,driver_id,status").eq("id", ride_id)
+        ride_result = ride_query.execute()
+        if not ride_result.data:
+            raise HTTPException(status_code=404, detail="Ride not found")
+        ride = ride_result.data[0]
+
+        if current_user['user_type'] == 'passenger':
+            if ride.get('passenger_id') != current_user['user_id']:
+                raise HTTPException(status_code=403, detail="Not authorized")
+            if data.status == 'cancelled' and ride.get('status') not in ['pending', 'scheduled']:
+                raise HTTPException(status_code=400, detail="Only pending or scheduled rides can be cancelled")
+        elif current_user['user_type'] == 'driver':
+            if ride.get('driver_id') != current_user['user_id']:
+                raise HTTPException(status_code=403, detail="Not authorized")
+        elif current_user['user_type'] not in ['admin', 'subadmin', 'superadmin']:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
         result = supabase.table("rides").update(update_data).eq("id", ride_id).execute()
         
         if result.data:
@@ -2095,12 +2360,31 @@ async def get_admin_stats(current_user: dict = Depends(get_current_user)):
     
     try:
         if current_user['user_type'] == 'admin':
-            admin = supabase.table("admins").select("cities").eq("id", current_user['user_id']).execute()
+            admin = supabase.table("admins").select("cities,brand_name").eq("id", current_user['user_id']).execute()
             admin_cities = admin.data[0].get('cities', []) if admin.data else []
-            
-            drivers = supabase.table("drivers").select("id,status").in_("city", admin_cities).execute()
-            passengers = supabase.table("passengers").select("id").in_("city", admin_cities).execute()
-            rides = supabase.table("rides").select("id,final_price,status").in_("city", admin_cities).execute()
+            admin_brand_name = admin.data[0].get('brand_name') if admin.data else None
+
+            drivers_query = supabase.table("drivers").select("id,status")
+            passengers_query = supabase.table("passengers").select("id")
+            rides_query = supabase.table("rides").select("id,final_price,status")
+
+            if admin_brand_name:
+                drivers_query = drivers_query.eq("admin_id", current_user['user_id'])
+                passengers_query = passengers_query.eq("admin_id", current_user['user_id'])
+                rides_query = rides_query.eq("admin_id", current_user['user_id'])
+            else:
+                drivers_query = drivers_query.or_("admin_id.is.null,admin_id.eq.{0}".format(current_user['user_id']))
+                passengers_query = passengers_query.or_("admin_id.is.null,admin_id.eq.{0}".format(current_user['user_id']))
+                rides_query = rides_query.or_("admin_id.is.null,admin_id.eq.{0}".format(current_user['user_id']))
+
+            if admin_cities:
+                drivers_query = drivers_query.in_("city", admin_cities)
+                passengers_query = passengers_query.in_("city", admin_cities)
+                rides_query = rides_query.in_("city", admin_cities)
+
+            drivers = drivers_query.execute()
+            passengers = passengers_query.execute()
+            rides = rides_query.execute()
         else:
             drivers = supabase.table("drivers").select("id,status").execute()
             passengers = supabase.table("passengers").select("id").execute()
@@ -2190,14 +2474,76 @@ async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_
         }
         table = table_map.get(current_user['user_type'])
         allowed_fields = {'full_name', 'email', 'phone'}
+        if current_user['user_type'] in {'passenger', 'driver'}:
+            allowed_fields.update({'profile_photo', 'city'})
+        if current_user['user_type'] == 'driver':
+            allowed_fields.update({
+                'vehicle_type',
+                'vehicle_brand',
+                'vehicle_model',
+                'vehicle_color',
+                'plate_number',
+                'vehicle_photo',
+                'license_photo',
+                'vehicle_papers'
+            })
+        if current_user['user_type'] == 'passenger':
+            allowed_fields.update({'moncash_enabled', 'moncash_phone', 'natcash_enabled', 'natcash_phone'})
+        if current_user['user_type'] == 'driver':
+            allowed_fields.update({
+                'moncash_enabled',
+                'moncash_phone',
+                'natcash_enabled',
+                'natcash_phone',
+                'bank_enabled',
+                'bank_name',
+                'bank_account_name',
+                'bank_account_number',
+                'default_method'
+            })
         if current_user['user_type'] == 'admin':
-            allowed_fields.add('logo')
+            allowed_fields.update({'logo', 'brand_name', 'primary_color', 'secondary_color', 'tertiary_color'})
         update_data = {k: v for k, v in (data or {}).items() if k in allowed_fields}
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
-        for key, value in update_data.items():
-            if value is None or (isinstance(value, str) and not value.strip()):
-                raise HTTPException(status_code=400, detail=f"{key} is required")
+        required_fields = {'full_name', 'email', 'phone'}
+        if current_user['user_type'] in {'passenger', 'driver'}:
+            required_fields.add('city')
+        for key in required_fields:
+            if key in update_data:
+                value = update_data.get(key)
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    raise HTTPException(status_code=400, detail=f"{key} is required")
+        if current_user['user_type'] == 'passenger':
+            if update_data.get('moncash_enabled'):
+                if not (update_data.get('moncash_phone') and str(update_data.get('moncash_phone')).strip()):
+                    raise HTTPException(status_code=400, detail="MonCash phone required")
+            if update_data.get('natcash_enabled'):
+                if not (update_data.get('natcash_phone') and str(update_data.get('natcash_phone')).strip()):
+                    raise HTTPException(status_code=400, detail="NatCash phone required")
+        if current_user['user_type'] == 'driver':
+            if update_data.get('moncash_enabled'):
+                if not (update_data.get('moncash_phone') and str(update_data.get('moncash_phone')).strip()):
+                    raise HTTPException(status_code=400, detail="MonCash phone required")
+            if update_data.get('natcash_enabled'):
+                if not (update_data.get('natcash_phone') and str(update_data.get('natcash_phone')).strip()):
+                    raise HTTPException(status_code=400, detail="NatCash phone required")
+            if update_data.get('bank_enabled'):
+                if not (update_data.get('bank_name') and str(update_data.get('bank_name')).strip()):
+                    raise HTTPException(status_code=400, detail="Bank name required")
+                if not (update_data.get('bank_account_name') and str(update_data.get('bank_account_name')).strip()):
+                    raise HTTPException(status_code=400, detail="Account name required")
+                if not (update_data.get('bank_account_number') and str(update_data.get('bank_account_number')).strip()):
+                    raise HTTPException(status_code=400, detail="Account number required")
+            if 'default_method' in update_data and update_data.get('default_method'):
+                if update_data['default_method'] not in ['moncash', 'natcash', 'bank']:
+                    raise HTTPException(status_code=400, detail="Invalid default method")
+                if update_data['default_method'] == 'moncash' and not update_data.get('moncash_enabled'):
+                    raise HTTPException(status_code=400, detail="MonCash must be enabled for default")
+                if update_data['default_method'] == 'natcash' and not update_data.get('natcash_enabled'):
+                    raise HTTPException(status_code=400, detail="NatCash must be enabled for default")
+                if update_data['default_method'] == 'bank' and not update_data.get('bank_enabled'):
+                    raise HTTPException(status_code=400, detail="Bank must be enabled for default")
         update_data["updated_at"] = datetime.utcnow().isoformat()
         result = supabase.table(table).update(update_data).eq("id", current_user['user_id']).execute()
         if result.data:

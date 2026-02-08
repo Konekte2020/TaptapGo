@@ -1,9 +1,20 @@
-import React from 'react';
-import { Tabs } from 'expo-router';
+import React, { useEffect } from 'react';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../src/constants/colors';
+import { useAuthStore } from '../../src/store/authStore';
 
 export default function SuperAdminLayout() {
+  const router = useRouter();
+  const { user, isAuthenticated, isLoading } = useAuthStore();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated || !user || user.user_type !== 'superadmin') {
+      router.replace('/auth/login?type=superadmin');
+    }
+  }, [isAuthenticated, isLoading, router, user]);
+
   return (
     <Tabs
       screenOptions={{

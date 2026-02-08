@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,15 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
+import { profileAPI } from '../../src/services/api';
 
 export default function PassengerProfile() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user, logout, updateUser } = useAuthStore();
+  const [savingPhoto, setSavingPhoto] = useState(false);
 
   const handleLogout = () => {
     Alert.alert(
@@ -35,14 +38,41 @@ export default function PassengerProfile() {
     );
   };
 
+  const handlePickPhoto = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.6,
+        base64: true,
+      });
+
+      if (result.canceled || !result.assets[0]?.base64) {
+        return;
+      }
+
+      setSavingPhoto(true);
+      const photo = `data:image/jpeg;base64,${result.assets[0].base64}`;
+      const response = await profileAPI.update({ profile_photo: photo });
+      if (response.data?.user) {
+        updateUser({ profile_photo: response.data.user.profile_photo });
+      } else {
+        updateUser({ profile_photo: photo });
+      }
+      Alert.alert('Siksè', 'Foto profil ou mete ajou.');
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab mete ajou foto a');
+    } finally {
+      setSavingPhoto(false);
+    }
+  };
+
   const menuItems = [
-    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => {} },
-    { icon: 'location-outline', label: 'Adrès Prefere', onPress: () => {} },
-    { icon: 'wallet-outline', label: 'Wallet', onPress: () => {} },
-    { icon: 'card-outline', label: 'Metòd Pèman', onPress: () => {} },
-    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => {} },
-    { icon: 'help-circle-outline', label: 'Èd', onPress: () => {} },
-    { icon: 'information-circle-outline', label: 'A propò', onPress: () => {} },
+    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => router.push('/passenger/edit-profile') },
+    { icon: 'card-outline', label: 'Metòd Pèman', onPress: () => router.push('/passenger/payment-methods') },
+    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => router.push('/passenger/notifications') },
+    { icon: 'help-circle-outline', label: 'Èd', onPress: () => router.push('/passenger/help') },
   ];
 
   return (
@@ -64,6 +94,10 @@ export default function PassengerProfile() {
                 </Text>
               </View>
             )}
+            <TouchableOpacity style={styles.photoButton} onPress={handlePickPhoto} disabled={savingPhoto}>
+              <Ionicons name="camera" size={16} color="white" />
+              <Text style={styles.photoButtonText}>{savingPhoto ? 'Ap mete...' : 'Chanje foto'}</Text>
+            </TouchableOpacity>
           </View>
           <Text style={styles.userName}>{user?.full_name}</Text>
           <Text style={styles.userPhone}>{user?.phone}</Text>
@@ -139,6 +173,7 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     marginBottom: 16,
+    alignItems: 'center',
   },
   avatar: {
     width: 80,
@@ -152,6 +187,21 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  photoButton: {
+    marginTop: 10,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  photoButtonText: {
+    fontSize: 12,
+    color: 'white',
+    fontWeight: '600',
   },
   avatarText: {
     fontSize: 32,

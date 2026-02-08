@@ -19,7 +19,7 @@ const MENU_ITEMS = [
 export default function AdminLayout() {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, logout } = useAuthStore();
+  const { user, logout, isAuthenticated, isLoading } = useAuthStore();
   const brandName = user?.brand_name || user?.full_name || 'Admin';
   const primaryColor = user?.primary_color || Colors.primary;
   const secondaryColor = user?.secondary_color || Colors.secondary;
@@ -33,14 +33,20 @@ export default function AdminLayout() {
     pathname?.includes('/admin/profile') ? 'Profil' :
     'Dashboard';
 
-  const visibleMenuItems = user?.user_type === 'subadmin'
+  const isTapTapGoAdmin = user?.user_type === 'admin' && !user?.brand_name;
+  const visibleMenuItems = user?.user_type === 'subadmin' || isTapTapGoAdmin
     ? MENU_ITEMS.filter((item) => ['Dashboard', 'Chofè', 'Pasajè', 'Plent', 'Profil'].includes(item.label))
     : MENU_ITEMS;
 
   useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated || !user || (user.user_type !== 'admin' && user.user_type !== 'subadmin')) {
+      router.replace('/auth/login?type=admin');
+      return;
+    }
     if (user?.user_type !== 'subadmin') return;
     router.replace('/admin-souadmin/dashboard');
-  }, [pathname, router, user?.user_type]);
+  }, [isAuthenticated, isLoading, pathname, router, user]);
 
   return (
     <View style={styles.page}>

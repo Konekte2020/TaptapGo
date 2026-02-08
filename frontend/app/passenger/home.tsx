@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,14 +10,33 @@ import {
   ActivityIndicator,
   Dimensions,
   ScrollView,
+  Image,
+  Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { Calendar } from 'react-native-calendars';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
 import { rideAPI, cityAPI } from '../../src/services/api';
 
 const { width } = Dimensions.get('window');
+const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
+
+const pad2 = (value: number) => value.toString().padStart(2, '0');
+const formatDate = (value: Date) => `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+const formatTime = (value: Date) => `${pad2(value.getHours())}:${pad2(value.getMinutes())}`;
+const combineDateTimeIso = (datePart: Date, timePart: Date) => {
+  const combined = new Date(
+    datePart.getFullYear(),
+    datePart.getMonth(),
+    datePart.getDate(),
+    timePart.getHours(),
+    timePart.getMinutes(),
+    0
+  );
+  return combined.toISOString();
+};
 
 export default function PassengerHome() {
   const { user } = useAuthStore();
@@ -28,6 +47,22 @@ export default function PassengerHome() {
   const [pickup, setPickup] = useState('Pozisyon mwen');
   const [estimate, setEstimate] = useState<any>(null);
   const [nearbyDrivers, setNearbyDrivers] = useState([]);
+  const [destinationSuggestions, setDestinationSuggestions] = useState<string[]>([]);
+  const [showVehicleSelector, setShowVehicleSelector] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState(new Date());
+  const [scheduledTime, setScheduledTime] = useState(new Date());
+  const [paymentMethod, setPaymentMethod] = useState<'cash'>('cash');
+  const timeOptions = useMemo(() => {
+    const options: string[] = [];
+    for (let hour = 6; hour <= 22; hour += 1) {
+      for (const minute of [0, 30]) {
+        options.push(`${pad2(hour)}:${pad2(minute)}`);
+      }
+    }
+    return options;
+  }, []);
 
   useEffect(() => {
     getLocation();
@@ -43,9 +78,28 @@ export default function PassengerHome() {
 
       const loc = await Location.getCurrentPositionAsync({});
       setLocation(loc);
+      await setPickupFromCoords(loc.coords.latitude, loc.coords.longitude);
       fetchNearbyDrivers(loc.coords.latitude, loc.coords.longitude);
     } catch (error) {
       console.error('Location error:', error);
+    }
+  };
+
+  const setPickupFromCoords = async (lat: number, lng: number) => {
+    try {
+      const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      if (results.length > 0) {
+        const place = results[0];
+        const parts = [
+          place.name,
+          place.street,
+          place.city,
+          place.region,
+        ].filter(Boolean);
+        setPickup(parts.join(', ') || 'Pozisyon mwen');
+      }
+    } catch (error) {
+      console.error('Reverse geocode error:', error);
     }
   };
 
@@ -57,6 +111,48 @@ export default function PassengerHome() {
       console.error('Fetch drivers error:', error);
     }
   };
+
+  useEffect(() => {
+    const trimmed = destination.trim();
+    if (trimmed.length < 2) {
+      setDestinationSuggestions([]);
+      return undefined;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        if (!MAPBOX_TOKEN) {
+          setDestinationSuggestions([]);
+          return;
+        }
+        const lat = location?.coords.latitude;
+        const lng = location?.coords.longitude;
+        const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=6&types=address,place,locality,neighborhood${proximity}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        const suggestions = (data?.features || []).map((item: any) => item.place_name as string);
+        setDestinationSuggestions(suggestions);
+      } catch (error) {
+        console.error('Autocomplete error:', error);
+        setDestinationSuggestions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [destination]);
+
+  const mapImageUrl = useMemo(() => {
+    const lat = location?.coords.latitude ?? 18.5944;
+    const lng = location?.coords.longitude ?? -72.3074;
+    if (MAPBOX_TOKEN) {
+      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff3b30(${lng},${lat})/${lng},${lat},14,0/600x300?access_token=${MAPBOX_TOKEN}`;
+    }
+    return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=14&size=600x300&markers=${lat},${lng},red-pushpin`;
+  }, [location]);
 
   const getEstimate = async () => {
     if (!destination) {
@@ -98,9 +194,16 @@ export default function PassengerHome() {
 
   const requestRide = async () => {
     if (!estimate) return;
+    if (scheduleEnabled) {
+      if (!scheduledDate || !scheduledTime) {
+        Alert.alert('Erè', 'Tanpri mete dat ak lè kous la');
+        return;
+      }
+    }
 
     setLoading(true);
     try {
+      const scheduledAt = scheduleEnabled ? combineDateTimeIso(scheduledDate, scheduledTime) : undefined;
       const response = await rideAPI.create({
         pickup_lat: location?.coords.latitude || 18.5944,
         pickup_lng: location?.coords.longitude || -72.3074,
@@ -112,12 +215,29 @@ export default function PassengerHome() {
         estimated_distance: estimate.distance,
         estimated_duration: estimate.duration,
         estimated_price: estimate.total,
+        scheduled_at: scheduledAt,
+        payment_method: paymentMethod,
       });
 
       if (response.data.success) {
-        Alert.alert('Siksè', 'Demann kous ou voye! N ap chache chofè...');
+        const assigned = response.data.assigned_driver;
+        if (assigned) {
+          const eta = response.data.eta_minutes ? `${response.data.eta_minutes} min` : 'Byen vit';
+          const contactCode = response.data.contact_code ? `Kòd apèl: ${response.data.contact_code}` : '';
+          Alert.alert(
+            'Chofè jwenn',
+            `${assigned.full_name} ap rive nan ${eta}.\n` +
+              `Veyikil: ${assigned.vehicle_brand} ${assigned.vehicle_model} (Koulè: ${assigned.vehicle_color}).\n` +
+              contactCode
+          );
+        } else {
+          Alert.alert('Siksè', scheduleEnabled ? 'Kous la pwograme.' : 'Demann kous ou voye! N ap chache chofè...');
+        }
         setEstimate(null);
         setDestination('');
+        setScheduleEnabled(false);
+        setScheduledDate(new Date());
+        setScheduledTime(new Date());
       }
     } catch (error: any) {
       console.error('Request ride error:', error);
@@ -142,47 +262,15 @@ export default function PassengerHome() {
           </View>
         </View>
 
-        {/* Map Placeholder */}
+        {/* Map */}
         <View style={styles.mapPlaceholder}>
-          <Ionicons name="map" size={60} color={Colors.textSecondary} />
-          <Text style={styles.mapText}>Kat la ap chaje...</Text>
+          <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
           {nearbyDrivers.length > 0 && (
             <View style={styles.driversCount}>
               <Ionicons name="car" size={16} color="white" />
               <Text style={styles.driversText}>{nearbyDrivers.length} chofè disponib</Text>
             </View>
           )}
-        </View>
-
-        {/* Vehicle Type Selection */}
-        <View style={styles.vehicleSelector}>
-          <TouchableOpacity
-            style={[styles.vehicleOption, vehicleType === 'moto' && styles.vehicleSelected]}
-            onPress={() => setVehicleType('moto')}
-          >
-            <Ionicons
-              name="bicycle"
-              size={28}
-              color={vehicleType === 'moto' ? Colors.moto : Colors.textSecondary}
-            />
-            <Text style={[styles.vehicleText, vehicleType === 'moto' && { color: Colors.moto }]}>
-              Moto
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.vehicleOption, vehicleType === 'car' && styles.vehicleSelected]}
-            onPress={() => setVehicleType('car')}
-          >
-            <Ionicons
-              name="car"
-              size={28}
-              color={vehicleType === 'car' ? Colors.car : Colors.textSecondary}
-            />
-            <Text style={[styles.vehicleText, vehicleType === 'car' && { color: Colors.car }]}>
-              Machin
-            </Text>
-          </TouchableOpacity>
         </View>
 
         {/* Location Inputs */}
@@ -210,9 +298,122 @@ export default function PassengerHome() {
               placeholder="Ki kote ou vle ale?"
               value={destination}
               onChangeText={setDestination}
+              onFocus={() => setShowVehicleSelector(true)}
             />
           </View>
         </View>
+
+        {isSearching && (
+          <View style={styles.searchingBadge}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.searchingText}>Ap chèche...</Text>
+          </View>
+        )}
+
+        {destinationSuggestions.length > 0 && (
+          <View style={styles.suggestions}>
+            {destinationSuggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={suggestion}
+                style={styles.suggestionItem}
+                onPress={() => {
+                  setDestination(suggestion);
+                  setDestinationSuggestions([]);
+                }}
+              >
+                <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
+                <Text style={styles.suggestionText} numberOfLines={1}>{suggestion}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        <View style={styles.scheduleCard}>
+          <View style={styles.scheduleHeader}>
+            <Text style={styles.scheduleTitle}>Pwograme kous</Text>
+            <Switch value={scheduleEnabled} onValueChange={setScheduleEnabled} />
+          </View>
+          {scheduleEnabled && (
+            <View style={styles.scheduleInputs}>
+              <View style={styles.calendarContainer}>
+                <Calendar
+                  current={formatDate(scheduledDate)}
+                  minDate={formatDate(new Date())}
+                  onDayPress={(day) => {
+                    setScheduledDate(new Date(day.dateString));
+                  }}
+                  markedDates={{
+                    [formatDate(scheduledDate)]: { selected: true, selectedColor: Colors.primary },
+                  }}
+                  theme={{
+                    todayTextColor: Colors.primary,
+                    arrowColor: Colors.primary,
+                    selectedDayBackgroundColor: Colors.primary,
+                  }}
+                />
+              </View>
+              <View style={styles.timePickerContainer}>
+                <Text style={styles.timeLabel}>Lè</Text>
+                <View style={styles.timeOptions}>
+                  {timeOptions.map((option) => {
+                    const isSelected = option === formatTime(scheduledTime);
+                    return (
+                      <TouchableOpacity
+                        key={option}
+                        style={[styles.timeChip, isSelected && styles.timeChipActive]}
+                        onPress={() => {
+                          const [h, m] = option.split(':').map((value) => Number(value));
+                          const next = new Date(scheduledTime);
+                          next.setHours(h);
+                          next.setMinutes(m);
+                          next.setSeconds(0);
+                          setScheduledTime(next);
+                        }}
+                      >
+                        <Text style={[styles.timeChipText, isSelected && styles.timeChipTextActive]}>
+                          {option}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Vehicle Type Selection */}
+        {showVehicleSelector && (
+          <View style={styles.vehicleSelector}>
+            <TouchableOpacity
+              style={[styles.vehicleOption, vehicleType === 'moto' && styles.vehicleSelected]}
+              onPress={() => setVehicleType('moto')}
+            >
+              <Ionicons
+                name="bicycle"
+                size={28}
+                color={vehicleType === 'moto' ? Colors.moto : Colors.textSecondary}
+              />
+              <Text style={[styles.vehicleText, vehicleType === 'moto' && { color: Colors.moto }]}>
+                Moto
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.vehicleOption, vehicleType === 'car' && styles.vehicleSelected]}
+              onPress={() => setVehicleType('car')}
+            >
+              <Ionicons
+                name="car"
+                size={28}
+                color={vehicleType === 'car' ? Colors.car : Colors.textSecondary}
+              />
+              <Text style={[styles.vehicleText, vehicleType === 'car' && { color: Colors.car }]}>
+                Machin
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Estimate Button */}
         {!estimate && (
@@ -270,6 +471,19 @@ export default function PassengerHome() {
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
               <Text style={styles.totalValue}>{Math.round(estimate.total)} HTG</Text>
+            </View>
+
+            <View style={styles.paymentSection}>
+              <Text style={styles.paymentTitle}>Mwayen Peman</Text>
+              <TouchableOpacity
+                style={[styles.paymentOption, paymentMethod === 'cash' && styles.paymentOptionActive]}
+                onPress={() => setPaymentMethod('cash')}
+              >
+                <Ionicons name="cash" size={18} color={paymentMethod === 'cash' ? 'white' : Colors.text} />
+                <Text style={[styles.paymentText, paymentMethod === 'cash' && styles.paymentTextActive]}>
+                  Lajan Kontan
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.estimateActions}>
@@ -342,11 +556,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
+    overflow: 'hidden',
   },
-  mapText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    marginTop: 8,
+  mapImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   driversCount: {
     position: 'absolute',
@@ -394,6 +609,112 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 20,
+  },
+  searchingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
+  searchingText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  suggestions: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    paddingVertical: 6,
+    marginBottom: 20,
+    ...Shadows.small,
+  },
+  scheduleCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 20,
+  },
+  scheduleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  scheduleTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  scheduleInputs: {
+    marginTop: 10,
+    gap: 8,
+  },
+  scheduleInputButton: {
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scheduleInputText: {
+    fontSize: 14,
+    color: Colors.text,
+  },
+  timePickerContainer: {
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    ...Shadows.small,
+  },
+  timeLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 4,
+  },
+  calendarContainer: {
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+    ...Shadows.small,
+  },
+  timeOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  timeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+  },
+  timeChipActive: {
+    backgroundColor: Colors.primary,
+  },
+  timeChipText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  timeChipTextActive: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  suggestionText: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
   },
   inputRow: {
     flexDirection: 'row',
@@ -488,6 +809,35 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: Colors.primary,
+  },
+  paymentSection: {
+    marginTop: 16,
+    gap: 10,
+  },
+  paymentTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  paymentOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.surface,
+  },
+  paymentOptionActive: {
+    backgroundColor: Colors.primary,
+  },
+  paymentText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  paymentTextActive: {
+    color: 'white',
   },
   estimateActions: {
     flexDirection: 'row',

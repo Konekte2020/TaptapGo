@@ -22,7 +22,7 @@ export default function PassengerLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: 'Akuy',
+          title: 'Akèy',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
           ),
@@ -38,6 +38,15 @@ export default function PassengerLayout() {
         }}
       />
       <Tabs.Screen
+        name="complaints"
+        options={{
+          title: 'Plent',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="alert-circle" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profil',
@@ -46,6 +55,10 @@ export default function PassengerLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="edit-profile" options={{ href: null }} />
+      <Tabs.Screen name="payment-methods" options={{ href: null }} />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
+      <Tabs.Screen name="help" options={{ href: null }} />
     </Tabs>
   );
 }

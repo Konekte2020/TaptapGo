@@ -64,11 +64,7 @@ export default function Login() {
             router.replace('/passenger/home');
             break;
           case 'driver':
-            if (response.data.user.status === 'approved') {
-              router.replace('/driver/home');
-            } else {
-              Alert.alert('An Atant', 'Kont ou an atant apwobasyon admin.');
-            }
+            router.replace('/driver/home');
             break;
           case 'admin':
             router.replace('/admin/dashboard');
@@ -170,14 +166,6 @@ export default function Login() {
               </View>
             )}
 
-            {userType === 'admin' && (
-              <TouchableOpacity
-                style={styles.superAdminLink}
-                onPress={() => router.push('/auth/login?type=superadmin')}
-              >
-                <Text style={styles.superAdminText}>Konekte kòm SuperAdmin</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -201,8 +189,8 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   logo: {
-    width: 180,
-    height: 70,
+    width: 360,
+    height: 140,
     alignSelf: 'center',
     marginBottom: 30,
   },
@@ -259,13 +247,5 @@ const styles = StyleSheet.create({
     color: Colors.primary,
     fontSize: 15,
     fontWeight: 'bold',
-  },
-  superAdminLink: {
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  superAdminText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
   },
 });

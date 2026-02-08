@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -19,25 +19,34 @@ import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { authAPI, vehicleAPI } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
-import { HAITI_CITIES } from '../../src/constants/haiti';
+import { DEPARTMENT_CITIES, HAITI_DEPARTMENTS } from '../../src/constants/haiti';
 
 export default function RegisterDriver() {
   const router = useRouter();
   const { login } = useAuthStore();
+  const phonePrefix = '+509 ';
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showDepartmentPicker, setShowDepartmentPicker] = useState(false);
   const [showCityPicker, setShowCityPicker] = useState(false);
   const [showBrandPicker, setShowBrandPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [brands, setBrands] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [citySearch, setCitySearch] = useState('');
+
+  const handlePhoneChange = (text: string) => {
+    const normalized = text.startsWith(phonePrefix) ? text : `${phonePrefix}${text.replace(/^\+?509\s*/, '')}`;
+    setForm({ ...form, phone: normalized });
+  };
 
   const [form, setForm] = useState({
     full_name: '',
     email: '',
-    phone: '',
+    phone: phonePrefix,
+    department: '',
     city: '',
     vehicle_type: '',
     vehicle_brand: '',
@@ -62,6 +71,14 @@ export default function RegisterDriver() {
       fetchModels();
     }
   }, [form.vehicle_brand]);
+
+  const availableCities = useMemo(() => {
+    if (!form.department) return [];
+    const cities = DEPARTMENT_CITIES[form.department] || [];
+    if (!citySearch.trim()) return cities;
+    const term = citySearch.trim().toLowerCase();
+    return cities.filter((city) => city.toLowerCase().includes(term));
+  }, [citySearch, form.department]);
 
   const fetchBrands = async () => {
     try {
@@ -108,7 +125,7 @@ export default function RegisterDriver() {
   };
 
   const validateStep2 = () => {
-    if (!form.city || !form.vehicle_type || !form.vehicle_brand || !form.vehicle_model || !form.plate_number) {
+    if (!form.department || !form.city || !form.vehicle_type || !form.vehicle_brand || !form.vehicle_model || !form.plate_number) {
       Alert.alert('Erè', 'Tanpri ranpli tout chan yo');
       return false;
     }
@@ -205,7 +222,12 @@ export default function RegisterDriver() {
           style={styles.input}
           placeholder="Nimèwo telefòn"
           value={form.phone}
-          onChangeText={(text) => setForm({ ...form, phone: text })}
+          onChangeText={handlePhoneChange}
+          onFocus={() => {
+            if (!form.phone.startsWith(phonePrefix)) {
+              setForm({ ...form, phone: phonePrefix });
+            }
+          }}
           keyboardType="phone-pad"
         />
       </View>
@@ -222,10 +244,51 @@ export default function RegisterDriver() {
 
   const renderStep2 = () => (
     <View style={styles.form}>
+      {/* Department Picker */}
+      <TouchableOpacity
+        style={styles.inputContainer}
+        onPress={() => setShowDepartmentPicker(!showDepartmentPicker)}
+      >
+        <Ionicons name="map-outline" size={20} color={Colors.textSecondary} />
+        <Text style={[styles.input, !form.department && styles.placeholder]}>
+          {form.department || 'Chwazi depatman'}
+        </Text>
+        <Ionicons name="chevron-down" size={20} color={Colors.textSecondary} />
+      </TouchableOpacity>
+
+      {showDepartmentPicker && (
+        <View style={styles.picker}>
+          <ScrollView style={styles.pickerList} nestedScrollEnabled>
+            {HAITI_DEPARTMENTS.map((department) => (
+              <TouchableOpacity
+                key={department}
+                style={styles.pickerItem}
+                onPress={() => {
+                  setForm({ ...form, department, city: '' });
+                  setCitySearch('');
+                  setShowDepartmentPicker(false);
+                  setShowCityPicker(true);
+                }}
+              >
+                <Text style={[styles.pickerText, form.department === department && styles.selectedItem]}>
+                  {department}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* City Picker */}
       <TouchableOpacity
         style={styles.inputContainer}
-        onPress={() => setShowCityPicker(!showCityPicker)}
+        onPress={() => {
+          if (!form.department) {
+            Alert.alert('Erè', 'Tanpri chwazi depatman an anvan');
+            return;
+          }
+          setShowCityPicker(!showCityPicker);
+        }}
       >
         <Ionicons name="location-outline" size={20} color={Colors.textSecondary} />
         <Text style={[styles.input, !form.city && styles.placeholder]}>
@@ -236,8 +299,18 @@ export default function RegisterDriver() {
 
       {showCityPicker && (
         <View style={styles.picker}>
+          <View style={styles.citySearch}>
+            <Ionicons name="search-outline" size={18} color={Colors.textSecondary} />
+            <TextInput
+              style={styles.citySearchInput}
+              placeholder="Chèche vil..."
+              value={citySearch}
+              onChangeText={setCitySearch}
+              autoCapitalize="none"
+            />
+          </View>
           <ScrollView style={styles.pickerList} nestedScrollEnabled>
-            {HAITI_CITIES.map((city) => (
+            {availableCities.map((city) => (
               <TouchableOpacity
                 key={city}
                 style={styles.pickerItem}
@@ -251,6 +324,9 @@ export default function RegisterDriver() {
                 </Text>
               </TouchableOpacity>
             ))}
+            {availableCities.length === 0 && (
+              <Text style={styles.emptyCityText}>Pa gen vil ki matche</Text>
+            )}
           </ScrollView>
         </View>
       )}
@@ -606,6 +682,20 @@ const styles = StyleSheet.create({
     maxHeight: 150,
     ...Shadows.small,
   },
+  citySearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 6,
+    gap: 8,
+  },
+  citySearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    paddingVertical: 6,
+  },
   pickerList: {
     padding: 8,
   },
@@ -620,6 +710,12 @@ const styles = StyleSheet.create({
   selectedItem: {
     color: Colors.primary,
     fontWeight: 'bold',
+  },
+  emptyCityText: {
+    textAlign: 'center',
+    color: Colors.textSecondary,
+    paddingVertical: 12,
+    fontSize: 14,
   },
   documentGrid: {
     flexDirection: 'row',

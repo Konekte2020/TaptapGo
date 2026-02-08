@@ -3,8 +3,10 @@ import { View, StyleSheet, Image, Text, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../src/store/authStore';
 import { Colors } from '../src/constants/colors';
+import { useProtectedRoute } from '../src/components/ProtectedRoute';
 
 export default function Index() {
+  useProtectedRoute();
   const router = useRouter();
   const { isAuthenticated, user, isLoading } = useAuthStore();
 

@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
+import { useAuthStore } from '../../src/store/authStore';
 
 const MENU_ITEMS = [
   { label: 'Dashboard', href: '/superadmin/dashboard', path: '/superadmin/dashboard', icon: 'grid' },
@@ -18,6 +19,14 @@ const MENU_ITEMS = [
 export default function SuperAdminLayout() {
   const pathname = usePathname();
   const router = useRouter();
+  const { user, isAuthenticated, isLoading } = useAuthStore();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated || !user || user.user_type !== 'superadmin') {
+      router.replace('/auth/login?type=superadmin');
+    }
+  }, [isAuthenticated, isLoading, router, user]);
 
   return (
     <View style={styles.page}>

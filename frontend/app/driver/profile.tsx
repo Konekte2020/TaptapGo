@@ -36,12 +36,11 @@ export default function DriverProfile() {
   };
 
   const menuItems = [
-    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => {} },
-    { icon: 'car-outline', label: 'Enfòmasyon Machin', onPress: () => {} },
-    { icon: 'document-outline', label: 'Dokiman', onPress: () => {} },
-    { icon: 'wallet-outline', label: 'Wallet & Peyman', onPress: () => {} },
-    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => {} },
-    { icon: 'help-circle-outline', label: 'Èd', onPress: () => {} },
+    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => router.push('/driver/edit-profile') },
+    { icon: 'car-outline', label: 'Enfòmasyon Machin', onPress: () => router.push('/driver/vehicle-info') },
+    { icon: 'document-outline', label: 'Dokiman', onPress: () => router.push('/driver/documents') },
+    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => router.push('/driver/notifications') },
+    { icon: 'help-circle-outline', label: 'Èd', onPress: () => router.push('/driver/help') },
   ];
 
   return (

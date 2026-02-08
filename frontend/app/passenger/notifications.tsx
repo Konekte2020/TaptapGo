@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { TouchableOpacity } from 'react-native';
 import { notificationsAPI } from '../../src/services/api';
 
-export default function DriverNotifications() {
+export default function PassengerNotifications() {
   const router = useRouter();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +38,7 @@ export default function DriverNotifications() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/driver/profile')}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/passenger/profile')}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Notifikasyon</Text>

@@ -61,7 +61,9 @@
           "photosPermission": "Chwazi foto pou profil ou",
           "cameraPermission": "Pran foto pou dokiman ou"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

@@ -82,11 +82,13 @@ export default function AdminProfile() {
   };
 
   const menuItems = [
-    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => {} },
-    { icon: 'color-palette-outline', label: 'Pesonàlize Brand', onPress: () => {} },
-    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => {} },
-    { icon: 'document-outline', label: 'Rapò', onPress: () => {} },
-    { icon: 'help-circle-outline', label: 'Èd', onPress: () => {} },
+    { icon: 'person-outline', label: 'Modifye Profil', onPress: () => router.push('/admin/edit-profile') },
+    ...(user?.brand_name
+      ? [{ icon: 'color-palette-outline', label: 'Pesonàlize Brand', onPress: () => router.push('/admin/brand') }]
+      : []),
+    { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => router.push('/admin/notifications') },
+    { icon: 'document-outline', label: 'Rapò', onPress: () => router.push('/admin/reports') },
+    { icon: 'help-circle-outline', label: 'Èd', onPress: () => router.push('/admin/help') },
   ];
 
   return (
@@ -107,11 +109,13 @@ export default function AdminProfile() {
               </View>
             )}
           </View>
-          <TouchableOpacity style={styles.changeLogoButton} onPress={pickLogo}>
-            <Text style={styles.changeLogoText}>Chanje foto</Text>
-          </TouchableOpacity>
           {user?.brand_name && (
-            <Text style={styles.brandName}>{user.brand_name}</Text>
+            <>
+              <TouchableOpacity style={styles.changeLogoButton} onPress={pickLogo}>
+                <Text style={styles.changeLogoText}>Chanje foto</Text>
+              </TouchableOpacity>
+              <Text style={styles.brandName}>{user.brand_name}</Text>
+            </>
           )}
           <TextInput
             style={styles.input}
@@ -133,39 +137,45 @@ export default function AdminProfile() {
             placeholder="Telefòn"
             keyboardType="phone-pad"
           />
-          <View style={styles.badge}>
-            <Ionicons name="briefcase" size={12} color="white" />
-            <Text style={styles.badgeText}>Admin White-Label</Text>
-          </View>
+          {user?.brand_name && (
+            <View style={styles.badge}>
+              <Ionicons name="briefcase" size={12} color="white" />
+              <Text style={styles.badgeText}>Admin White-Label</Text>
+            </View>
+          )}
         </View>
 
         {/* Cities Managed */}
-        <View style={styles.citiesCard}>
-          <Text style={styles.citiesTitle}>Vil ou jère</Text>
-          <View style={styles.citiesList}>
-            {(user?.cities || []).map((city, index) => (
-              <View key={index} style={styles.cityChip}>
-                <Ionicons name="location" size={12} color={Colors.primary} />
-                <Text style={styles.cityText}>{city}</Text>
-              </View>
-            ))}
+        {user?.brand_name && (
+          <View style={styles.citiesCard}>
+            <Text style={styles.citiesTitle}>Vil ou jère</Text>
+            <View style={styles.citiesList}>
+              {(user?.cities || []).map((city, index) => (
+                <View key={index} style={styles.cityChip}>
+                  <Ionicons name="location" size={12} color={Colors.primary} />
+                  <Text style={styles.cityText}>{city}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Brand Colors */}
-        <View style={styles.colorsCard}>
-          <Text style={styles.colorsTitle}>Koulè Brand</Text>
-          <View style={styles.colorsRow}>
-            <View style={styles.colorItem}>
-              <View style={[styles.colorBox, { backgroundColor: user?.primary_color || Colors.primary }]} />
-              <Text style={styles.colorLabel}>Primè</Text>
-            </View>
-            <View style={styles.colorItem}>
-              <View style={[styles.colorBox, { backgroundColor: user?.secondary_color || Colors.secondary }]} />
-              <Text style={styles.colorLabel}>Segondè</Text>
+        {user?.brand_name && (
+          <View style={styles.colorsCard}>
+            <Text style={styles.colorsTitle}>Koulè Brand</Text>
+            <View style={styles.colorsRow}>
+              <View style={styles.colorItem}>
+                <View style={[styles.colorBox, { backgroundColor: user?.primary_color || Colors.primary }]} />
+                <Text style={styles.colorLabel}>Primè</Text>
+              </View>
+              <View style={styles.colorItem}>
+                <View style={[styles.colorBox, { backgroundColor: user?.secondary_color || Colors.secondary }]} />
+                <Text style={styles.colorLabel}>Segondè</Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* Menu Items */}
         <View style={styles.menuContainer}>

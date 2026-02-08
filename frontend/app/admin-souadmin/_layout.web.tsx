@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,10 +17,17 @@ const MENU_ITEMS = [
 export default function AdminSouAdminLayout() {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, logout } = useAuthStore();
+  const { user, logout, isAuthenticated, isLoading } = useAuthStore();
   const brandName = user?.brand_name || user?.full_name || 'SouAdmin';
   const primaryColor = user?.primary_color || Colors.primary;
   const secondaryColor = user?.secondary_color || Colors.secondary;
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated || !user || user.user_type !== 'subadmin') {
+      router.replace('/auth/login?type=admin');
+    }
+  }, [isAuthenticated, isLoading, router, user]);
 
   const pageTitle =
     pathname?.includes('/admin-souadmin/drivers') ? 'Chofè' :

@@ -1,41 +1,16 @@
 import React, { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/store/authStore';
-import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Colors } from '../src/constants/colors';
 
 export default function RootLayout() {
   const { loadStoredAuth, isLoading } = useAuthStore();
-  const router = useRouter();
-  const segments = useSegments();
 
   useEffect(() => {
     loadStoredAuth();
   }, []);
-
-  useEffect(() => {
-    if (isLoading) return;
-
-    const mainSegment = segments[0];
-    if (!mainSegment) return;
-    if (mainSegment === 'auth') return;
-
-    if (
-      Platform.OS !== 'web' &&
-      (mainSegment === 'admin' || mainSegment === 'superadmin' || mainSegment === 'admin-souadmin')
-    ) {
-      router.replace('/auth/role-select');
-      return;
-    }
-
-    if (
-      Platform.OS === 'web' &&
-      (mainSegment === 'driver' || mainSegment === 'passenger')
-    ) {
-      router.replace('/auth/role-select');
-    }
-  }, [isLoading, router, segments]);
 
   if (isLoading) {
     return (

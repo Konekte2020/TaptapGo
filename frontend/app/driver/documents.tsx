@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -40,12 +41,30 @@ export default function DriverDocuments() {
     return (user as any)?.[field] as string | undefined;
   };
 
-  const handlePickDocument = async (field: DocumentField) => {
+  const openImagePicker = async (field: DocumentField, source: 'camera' | 'library') => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè kamera.');
+          return;
+        }
+      } else if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè galri a.');
+          return;
+        }
+      }
+
+      const picker =
+        source === 'camera'
+          ? ImagePicker.launchCameraAsync
+          : ImagePicker.launchImageLibraryAsync;
+
+      const result = await picker({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsEditing: false,
         quality: 0.6,
         base64: true,
       });
@@ -69,6 +88,18 @@ export default function DriverDocuments() {
     } finally {
       setUploadingField(null);
     }
+  };
+
+  const handlePickDocument = (field: DocumentField) => {
+    Alert.alert(
+      'Ajoute dokiman',
+      'Chwazi sous foto a',
+      [
+        { text: 'Galri', onPress: () => openImagePicker(field, 'library') },
+        { text: 'Kamera', onPress: () => openImagePicker(field, 'camera') },
+        { text: 'Anile', style: 'cancel' },
+      ]
+    );
   };
 
   return (
@@ -143,8 +174,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   card: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     ...Shadows.small,
     gap: 12,
@@ -172,7 +203,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderRadius: 14,
+    ...Shadows.small,
   },
   uploadButtonDisabled: {
     opacity: 0.7,
@@ -185,17 +217,19 @@ const styles = StyleSheet.create({
   preview: {
     width: '100%',
     height: 180,
-    borderRadius: 12,
+    borderRadius: 16,
     resizeMode: 'cover',
+    ...Shadows.small,
   },
   previewPlaceholder: {
     width: '100%',
     height: 180,
-    borderRadius: 12,
+    borderRadius: 16,
     backgroundColor: Colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
+    ...Shadows.small,
   },
   placeholderText: {
     fontSize: 12,

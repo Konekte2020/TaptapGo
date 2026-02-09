@@ -12,12 +12,34 @@ const iosUrl = process.env.EXPO_PUBLIC_BACKEND_URL_IOS || '';
 const nativeUrl = process.env.EXPO_PUBLIC_BACKEND_URL_NATIVE || '';
 const webUrl = process.env.EXPO_PUBLIC_BACKEND_URL_WEB || '';
 
-const API_URL =
+const isBrowser = typeof window !== 'undefined';
+const currentHostname = isBrowser ? window.location.hostname : '';
+const isLocalHostname = currentHostname === 'localhost' || currentHostname === '127.0.0.1';
+
+const isLocalUrl = (url: string) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/.test(url);
+
+const normalizeUrl = (url: string) => url.replace(/\/+$/, '');
+
+const resolveWebUrl = () => {
+  const fallback = baseUrlFromEnv || (isBrowser ? window.location.origin : '');
+  const candidate = webUrl || fallback;
+
+  if (isBrowser && !isLocalHostname && isLocalUrl(candidate) && baseUrlFromEnv) {
+    return baseUrlFromEnv;
+  }
+
+  return candidate;
+};
+
+const resolvedWebUrl = normalizeUrl(resolveWebUrl());
+
+export const API_URL =
   Platform.OS === 'android'
     ? androidUrl || nativeUrl || DEFAULT_ANDROID_URL || baseUrlFromEnv
     : Platform.OS === 'ios'
       ? iosUrl || nativeUrl || DEFAULT_IOS_URL || baseUrlFromEnv
-      : webUrl || baseUrlFromEnv;
+      : resolvedWebUrl || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
@@ -47,6 +69,7 @@ export const authAPI = {
     city: string;
     password: string;
     profile_photo?: string;
+    admin_id?: string;
   }) => api.post('/auth/register/passenger', data),
   
   registerDriver: (data: {
@@ -63,10 +86,16 @@ export const authAPI = {
     vehicle_papers?: string;
     profile_photo?: string;
     password: string;
+    admin_id?: string;
   }) => api.post('/auth/register/driver', data),
   
   login: (phone_or_email: string, password: string, user_type: string) => 
     api.post('/auth/login', { phone_or_email, password, user_type }),
+
+  passwordResetRequest: (data: { identifier: string; channel: 'phone' | 'email'; user_type: string }) =>
+    api.post('/auth/password-reset/request', data),
+  passwordResetConfirm: (data: { identifier: string; channel: 'phone' | 'email'; user_type: string; code: string; new_password: string }) =>
+    api.post('/auth/password-reset/confirm', data),
   
   createSuperAdmin: (data: {
     full_name: string;
@@ -100,6 +129,23 @@ export const driverAPI = {
   updateLocation: (id: string, lat: number, lng: number) => api.put(`/drivers/${id}/location`, { lat, lng }),
   getVerifications: (id: string) => api.get(`/drivers/${id}/verifications`),
   createByAdmin: (data: any) => api.post('/admin/drivers', data),
+  remindMissingDocs: (data?: { driver_id?: string; status?: string; message?: string }) =>
+    api.post('/drivers/remind-missing-docs', data || {}),
+  createTestRideAdmin: (data?: {
+    driver_id?: string;
+    admin_id?: string | null;
+    vehicle_type?: 'moto' | 'car';
+    city?: string;
+    pickup_lat?: number;
+    pickup_lng?: number;
+    pickup_address?: string;
+    destination_lat?: number;
+    destination_lng?: number;
+    destination_address?: string;
+  }) => api.post('/rides/test', data || {}),
+  getActiveTestRides: (params?: { admin_id?: string | null; vehicle_type?: 'moto' | 'car' }) =>
+    api.get('/rides/test/active', { params }),
+  createTestRideAuto: () => api.post('/rides/test/auto'),
 };
 
 // Passenger APIs
@@ -164,6 +210,7 @@ export const profileAPI = {
     primary_color?: string;
     secondary_color?: string;
     tertiary_color?: string;
+    cities?: string[];
     vehicle_type?: string;
     vehicle_brand?: string;
     vehicle_model?: string;
@@ -187,6 +234,7 @@ export const profileAPI = {
 
 export const notificationsAPI = {
   getAll: () => api.get('/notifications'),
+  markAllRead: () => api.post('/notifications/mark-read'),
 };
 
 export const pricingAPI = {
@@ -206,6 +254,34 @@ export const adminPricingAPI = {
     surge_multiplier: number;
     commission_rate: number;
   }) => api.put('/admin/pricing', data),
+};
+
+// Build APIs (SuperAdmin)
+export const buildAPI = {
+  generateBuild: (data: {
+    brand_id: string;
+    company_name: string;
+    logo: string;
+    primary_color: string;
+    secondary_color: string;
+    tertiary_color: string;
+    local_only?: boolean;
+    build_mode?: 'local' | 'cloud';
+  }) => api.post('/superadmin/builds/generate', data),
+
+  getBuildStatus: (buildId: string) =>
+    api.get(`/superadmin/builds/status/${buildId}`),
+
+  listBuilds: (brandId?: string) =>
+    api.get('/superadmin/builds', { params: { brand_id: brandId } }),
+
+  downloadBuild: (buildId: string) =>
+    api.get(`/superadmin/builds/download/${buildId}`, {
+      responseType: 'blob',
+    }),
+
+  clearBuildCache: () => api.post('/superadmin/builds/cache/clear'),
+  clearFailedBuilds: (brandId?: string) => api.delete('/superadmin/builds/failed', { params: { brand_id: brandId } }),
 };
 
 export const adminPaymentAPI = {

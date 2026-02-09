@@ -84,7 +84,10 @@ export default function AdminProfile() {
   const menuItems = [
     { icon: 'person-outline', label: 'Modifye Profil', onPress: () => router.push('/admin/edit-profile') },
     ...(user?.brand_name
-      ? [{ icon: 'color-palette-outline', label: 'Pesonàlize Brand', onPress: () => router.push('/admin/brand') }]
+      ? [
+          { icon: 'color-palette-outline', label: 'Pesonàlize Brand', onPress: () => router.push('/admin/brand') },
+          { icon: 'location-outline', label: 'Jere Vil', onPress: () => router.push('/admin/cities') },
+        ]
       : []),
     { icon: 'notifications-outline', label: 'Notifikasyon', onPress: () => router.push('/admin/notifications') },
     { icon: 'document-outline', label: 'Rapò', onPress: () => router.push('/admin/reports') },
@@ -148,7 +151,12 @@ export default function AdminProfile() {
         {/* Cities Managed */}
         {user?.brand_name && (
           <View style={styles.citiesCard}>
-            <Text style={styles.citiesTitle}>Vil ou jère</Text>
+            <View style={styles.citiesHeader}>
+              <Text style={styles.citiesTitle}>Vil ou jère</Text>
+              <TouchableOpacity onPress={() => router.push('/admin/cities')}>
+                <Text style={styles.citiesEdit}>Modifye</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.citiesList}>
               {(user?.cities || []).map((city, index) => (
                 <View key={index} style={styles.cityChip}>
@@ -299,11 +307,21 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
   },
+  citiesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   citiesTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text,
-    marginBottom: 12,
+  },
+  citiesEdit: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '600',
   },
   citiesList: {
     flexDirection: 'row',

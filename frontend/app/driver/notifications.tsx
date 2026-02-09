@@ -20,6 +20,7 @@ export default function DriverNotifications() {
     try {
       const response = await notificationsAPI.getAll();
       setNotifications(response.data.notifications || []);
+      await notificationsAPI.markAllRead();
     } catch (error) {
       console.error('Notifications error:', error);
     } finally {
@@ -83,9 +84,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   card: {
-    backgroundColor: Colors.background,
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 16,
     ...Shadows.small,
     gap: 6,
   },

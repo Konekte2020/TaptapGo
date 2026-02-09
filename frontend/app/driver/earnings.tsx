@@ -388,10 +388,11 @@ const styles = StyleSheet.create({
   },
   totalCard: {
     backgroundColor: Colors.primary,
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 24,
     alignItems: 'center',
     marginBottom: 20,
+    ...Shadows.medium,
   },
   totalLabel: {
     fontSize: 14,
@@ -414,8 +415,8 @@ const styles = StyleSheet.create({
   },
   periodCard: {
     flex: 1,
-    backgroundColor: Colors.background,
-    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     ...Shadows.small,
@@ -433,9 +434,10 @@ const styles = StyleSheet.create({
   },
   walletCard: {
     backgroundColor: Colors.secondary,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     marginBottom: 24,
+    ...Shadows.medium,
   },
   walletHeader: {
     flexDirection: 'row',
@@ -458,8 +460,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   paymentCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 20,
     ...Shadows.small,
@@ -489,7 +491,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
     height: 50,
   },
@@ -505,7 +507,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     fontSize: 14,
     color: Colors.text,
@@ -519,10 +521,11 @@ const styles = StyleSheet.create({
   },
   defaultButton: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: Colors.surface,
     alignItems: 'center',
+    ...Shadows.small,
   },
   defaultButtonActive: {
     backgroundColor: Colors.primary,
@@ -537,9 +540,10 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     backgroundColor: Colors.primary,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: 'center',
+    ...Shadows.small,
   },
   saveButtonDisabled: {
     opacity: 0.6,
@@ -549,8 +553,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   recentSection: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     ...Shadows.small,
   },

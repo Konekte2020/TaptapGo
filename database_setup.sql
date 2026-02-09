@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS passengers (
     city TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     profile_photo TEXT,
+    admin_id UUID,
     moncash_enabled BOOLEAN DEFAULT FALSE,
     moncash_phone TEXT,
     natcash_enabled BOOLEAN DEFAULT FALSE,
@@ -33,6 +34,8 @@ ALTER TABLE passengers
   ADD COLUMN IF NOT EXISTS natcash_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE passengers
   ADD COLUMN IF NOT EXISTS natcash_phone TEXT;
+ALTER TABLE passengers
+  ADD COLUMN IF NOT EXISTS admin_id UUID;
 
 -- Drivers table
 CREATE TABLE IF NOT EXISTS drivers (
@@ -239,6 +242,25 @@ ALTER TABLE otp_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE favorite_addresses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 
+-- Builds table (APK builds)
+CREATE TABLE IF NOT EXISTS builds (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    brand_id UUID NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'queued',
+    progress INTEGER DEFAULT 0,
+    message TEXT,
+    apk_path TEXT,
+    apk_url TEXT,
+    error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_builds_brand_id ON builds(brand_id);
+CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
+
+ALTER TABLE builds ENABLE ROW LEVEL SECURITY;
+
 -- Create policies to allow access (for development - tighten in production)
 DROP POLICY IF EXISTS "Allow all access to passengers" ON passengers;
 DROP POLICY IF EXISTS "Allow all access to drivers" ON drivers;
@@ -249,6 +271,7 @@ DROP POLICY IF EXISTS "Allow all access to rides" ON rides;
 DROP POLICY IF EXISTS "Allow all access to otp_codes" ON otp_codes;
 DROP POLICY IF EXISTS "Allow all access to favorite_addresses" ON favorite_addresses;
 DROP POLICY IF EXISTS "Allow all access to transactions" ON transactions;
+DROP POLICY IF EXISTS "Allow all access to builds" ON builds;
 
 CREATE POLICY "Allow all access to passengers" ON passengers FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to drivers" ON drivers FOR ALL USING (true) WITH CHECK (true);
@@ -259,6 +282,7 @@ CREATE POLICY "Allow all access to rides" ON rides FOR ALL USING (true) WITH CHE
 CREATE POLICY "Allow all access to otp_codes" ON otp_codes FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to favorite_addresses" ON favorite_addresses FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all access to transactions" ON transactions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to builds" ON builds FOR ALL USING (true) WITH CHECK (true);
 
 -- Insert default cities for Haiti
 INSERT INTO cities (name, base_fare_moto, base_fare_car, price_per_km_moto, price_per_km_car, price_per_min_moto, price_per_min_car, surge_multiplier, system_commission)

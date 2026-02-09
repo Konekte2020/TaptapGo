@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { Calendar } from 'react-native-calendars';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
 import { rideAPI, cityAPI } from '../../src/services/api';
+import { MapView, Marker, Polyline } from '../../src/components/MapViewWrapper';
 
 const { width } = Dimensions.get('window');
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
@@ -47,13 +48,28 @@ export default function PassengerHome() {
   const [pickup, setPickup] = useState('Pozisyon mwen');
   const [estimate, setEstimate] = useState<any>(null);
   const [nearbyDrivers, setNearbyDrivers] = useState([]);
-  const [destinationSuggestions, setDestinationSuggestions] = useState<string[]>([]);
+  const [destinationSuggestions, setDestinationSuggestions] = useState<
+    Array<{ label: string; lat: number; lng: number }>
+  >([]);
+  const [pickupSuggestions, setPickupSuggestions] = useState<
+    Array<{ label: string; lat: number; lng: number }>
+  >([]);
+  const [destinationCoords, setDestinationCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [showVehicleSelector, setShowVehicleSelector] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSearchingPickup, setIsSearchingPickup] = useState(false);
+  const [showPickupSuggestions, setShowPickupSuggestions] = useState(false);
+  const [searchingRide, setSearchingRide] = useState(false);
+  const [driverMarker, setDriverMarker] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [driverVehicle, setDriverVehicle] = useState<'moto' | 'car'>('moto');
+  const [followUser, setFollowUser] = useState(false);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledDate, setScheduledDate] = useState(new Date());
   const [scheduledTime, setScheduledTime] = useState(new Date());
   const [paymentMethod, setPaymentMethod] = useState<'cash'>('cash');
+  const mapRef = useRef<MapView | null>(null);
   const timeOptions = useMemo(() => {
     const options: string[] = [];
     for (let hour = 6; hour <= 22; hour += 1) {
@@ -67,6 +83,43 @@ export default function PassengerHome() {
   useEffect(() => {
     getLocation();
   }, []);
+
+  useEffect(() => {
+    let subscription: Location.LocationSubscription | null = null;
+    const startWatch = async () => {
+      try {
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 5000,
+            distanceInterval: 10,
+          },
+          (loc) => {
+            setLocation(loc);
+            if (followUser && mapRef.current) {
+              mapRef.current.animateToRegion(
+                {
+                  latitude: loc.coords.latitude,
+                  longitude: loc.coords.longitude,
+                  latitudeDelta: 0.05,
+                  longitudeDelta: 0.05,
+                },
+                500
+              );
+            }
+          }
+        );
+      } catch (error) {
+        console.error('Location watch error:', error);
+      }
+    };
+    startWatch();
+    return () => {
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, [followUser]);
 
   const getLocation = async () => {
     try {
@@ -97,6 +150,7 @@ export default function PassengerHome() {
           place.region,
         ].filter(Boolean);
         setPickup(parts.join(', ') || 'Pozisyon mwen');
+        setPickupCoords({ lat, lng });
       }
     } catch (error) {
       console.error('Reverse geocode error:', error);
@@ -132,8 +186,12 @@ export default function PassengerHome() {
         const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=6&types=address,place,locality,neighborhood${proximity}`;
         const response = await fetch(url);
         const data = await response.json();
-        const suggestions = (data?.features || []).map((item: any) => item.place_name as string);
-        setDestinationSuggestions(suggestions);
+        const suggestions = (data?.features || []).map((item: any) => ({
+          label: item.place_name as string,
+          lat: item.center?.[1] ?? 0,
+          lng: item.center?.[0] ?? 0,
+        }));
+        setDestinationSuggestions(suggestions.filter((item: any) => item.lat && item.lng));
       } catch (error) {
         console.error('Autocomplete error:', error);
         setDestinationSuggestions([]);
@@ -145,6 +203,78 @@ export default function PassengerHome() {
     return () => clearTimeout(timer);
   }, [destination]);
 
+  useEffect(() => {
+    if (!searchingRide || !pickupCoords) return undefined;
+    let active = true;
+    const pollDrivers = async () => {
+      try {
+        const response = await rideAPI.getNearbyDrivers(
+          pickupCoords.lat,
+          pickupCoords.lng,
+          vehicleType,
+          user?.city || 'Port-au-Prince'
+        );
+        const drivers = response.data.drivers || [];
+        if (!active) return;
+        if (drivers.length > 0) {
+          const driver = drivers[0];
+          if (driver.current_lat && driver.current_lng) {
+            setDriverMarker({
+              latitude: Number(driver.current_lat),
+              longitude: Number(driver.current_lng),
+            });
+            setDriverVehicle(driver.vehicle_type === 'moto' ? 'moto' : 'car');
+          }
+        }
+      } catch (error) {
+        console.error('Polling drivers error:', error);
+      }
+    };
+    pollDrivers();
+    const timer = setInterval(pollDrivers, 8000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [searchingRide, pickupCoords, vehicleType, user?.city]);
+
+  useEffect(() => {
+    const trimmed = pickup.trim();
+    if (!showPickupSuggestions || trimmed.length < 2) {
+      setPickupSuggestions([]);
+      return undefined;
+    }
+
+    setIsSearchingPickup(true);
+    const timer = setTimeout(async () => {
+      try {
+        if (!MAPBOX_TOKEN) {
+          setPickupSuggestions([]);
+          return;
+        }
+        const lat = location?.coords.latitude;
+        const lng = location?.coords.longitude;
+        const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=6&types=address,place,locality,neighborhood${proximity}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        const suggestions = (data?.features || []).map((item: any) => ({
+          label: item.place_name as string,
+          lat: item.center?.[1] ?? 0,
+          lng: item.center?.[0] ?? 0,
+        }));
+        setPickupSuggestions(suggestions.filter((item: any) => item.lat && item.lng));
+      } catch (error) {
+        console.error('Pickup autocomplete error:', error);
+        setPickupSuggestions([]);
+      } finally {
+        setIsSearchingPickup(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [pickup, showPickupSuggestions, location]);
+
   const mapImageUrl = useMemo(() => {
     const lat = location?.coords.latitude ?? 18.5944;
     const lng = location?.coords.longitude ?? -72.3074;
@@ -154,35 +284,128 @@ export default function PassengerHome() {
     return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=14&size=600x300&markers=${lat},${lng},red-pushpin`;
   }, [location]);
 
+  const mapRegion = useMemo(
+    () => ({
+      latitude: location?.coords.latitude ?? 18.5944,
+      longitude: location?.coords.longitude ?? -72.3074,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    }),
+    [location]
+  );
+
+  const calculateDistanceKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const resolveDestinationCoords = async () => {
+    if (destinationCoords) return destinationCoords;
+    if (!MAPBOX_TOKEN) return null;
+    const trimmed = destination.trim();
+    if (!trimmed) return null;
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=1&types=address,place,locality,neighborhood`;
+    const response = await fetch(url);
+    const data = await response.json();
+    const first = data?.features?.[0];
+    if (!first?.center?.length) return null;
+    return { lat: first.center[1], lng: first.center[0] };
+  };
+
+  const resolvePickupCoords = async () => {
+    if (pickupCoords) return pickupCoords;
+    if (!MAPBOX_TOKEN) return null;
+    const trimmed = pickup.trim();
+    if (!trimmed) return null;
+    const lat = location?.coords.latitude;
+    const lng = location?.coords.longitude;
+    const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=1&types=address,place,locality,neighborhood${proximity}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    const first = data?.features?.[0];
+    if (!first?.center?.length) return null;
+    return { lat: first.center[1], lng: first.center[0] };
+  };
+
   const getEstimate = async () => {
     if (!destination) {
       Alert.alert('Erè', 'Tanpri mete destinasyon ou');
       return;
     }
+    if (!pickup) {
+      Alert.alert('Erè', 'Tanpri mete adrès pickup la');
+      return;
+    }
+    if (!location?.coords) {
+      Alert.alert('Erè', 'Nou pa jwenn pozisyon ou ankò.');
+      return;
+    }
+    if (!MAPBOX_TOKEN) {
+      Alert.alert('Erè', 'Map la pa disponib. Tanpri ajoute kle Mapbox.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // Mock distance and duration for demo
-      const mockDistance = Math.random() * 10 + 2; // 2-12 km
-      const mockDuration = mockDistance * 3; // ~3 min per km
+      const resolvedPickup = await resolvePickupCoords();
+      const resolvedDestination = await resolveDestinationCoords();
+      if (!resolvedPickup) {
+        Alert.alert('Erè', 'Nou pa jwenn adrès pickup la. Chwazi li nan lis la oswa verifye tèks la.');
+        return;
+      }
+      if (!resolvedDestination) {
+        Alert.alert('Erè', 'Nou pa jwenn destinasyon an. Chwazi li nan lis la oswa verifye tèks la.');
+        return;
+      }
+      setPickupCoords(resolvedPickup);
+      setDestinationCoords(resolvedDestination);
+
+      const directionsUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${resolvedPickup.lng},${resolvedPickup.lat};${resolvedDestination.lng},${resolvedDestination.lat}?access_token=${MAPBOX_TOKEN}&geometries=geojson&overview=simplified`;
+      const directionsResponse = await fetch(directionsUrl);
+      const directionsData = await directionsResponse.json();
+      const route = directionsData?.routes?.[0];
+      const routePoints = route?.geometry?.coordinates || [];
+      setRouteCoords(
+        routePoints.map((point: number[]) => ({
+          latitude: point[1],
+          longitude: point[0],
+        }))
+      );
+      const distanceKm = route?.distance ? route.distance / 1000 : calculateDistanceKm(
+        resolvedPickup.lat,
+        resolvedPickup.lng,
+        resolvedDestination.lat,
+        resolvedDestination.lng
+      );
+      const durationMin = route?.duration ? route.duration / 60 : Math.max(5, distanceKm * 3);
 
       const response = await rideAPI.estimate({
-        pickup_lat: location?.coords.latitude || 18.5944,
-        pickup_lng: location?.coords.longitude || -72.3074,
+        pickup_lat: resolvedPickup.lat,
+        pickup_lng: resolvedPickup.lng,
         pickup_address: pickup,
-        destination_lat: 18.5944 + (Math.random() * 0.05),
-        destination_lng: -72.3074 + (Math.random() * 0.05),
+        destination_lat: resolvedDestination.lat,
+        destination_lng: resolvedDestination.lng,
         destination_address: destination,
         vehicle_type: vehicleType,
-        estimated_distance: mockDistance,
-        estimated_duration: mockDuration,
+        estimated_distance: distanceKm,
+        estimated_duration: durationMin,
         estimated_price: 0,
       });
 
       setEstimate({
         ...response.data.estimate,
-        distance: mockDistance,
-        duration: mockDuration,
+        distance: distanceKm,
+        duration: durationMin,
+        destination_coords: resolvedDestination,
       });
     } catch (error) {
       console.error('Estimate error:', error);
@@ -204,12 +427,28 @@ export default function PassengerHome() {
     setLoading(true);
     try {
       const scheduledAt = scheduleEnabled ? combineDateTimeIso(scheduledDate, scheduledTime) : undefined;
+      const resolvedPickup = pickupCoords || (await resolvePickupCoords());
+      const pickupLat = resolvedPickup?.lat || location?.coords.latitude || 18.5944;
+      const pickupLng = resolvedPickup?.lng || location?.coords.longitude || -72.3074;
+      const resolvedDestination =
+        estimate?.destination_coords ||
+        destinationCoords ||
+        (await resolveDestinationCoords());
+      if (!resolvedPickup) {
+        Alert.alert('Erè', 'Nou pa jwenn adrès pickup la. Chwazi li nan lis la oswa verifye tèks la.');
+        return;
+      }
+      if (!resolvedDestination) {
+        Alert.alert('Erè', 'Nou pa jwenn destinasyon an. Chwazi li nan lis la oswa verifye tèks la.');
+        return;
+      }
+
       const response = await rideAPI.create({
-        pickup_lat: location?.coords.latitude || 18.5944,
-        pickup_lng: location?.coords.longitude || -72.3074,
+        pickup_lat: pickupLat,
+        pickup_lng: pickupLng,
         pickup_address: pickup,
-        destination_lat: 18.5944 + (Math.random() * 0.05),
-        destination_lng: -72.3074 + (Math.random() * 0.05),
+        destination_lat: resolvedDestination.lat,
+        destination_lng: resolvedDestination.lng,
         destination_address: destination,
         vehicle_type: vehicleType,
         estimated_distance: estimate.distance,
@@ -230,11 +469,16 @@ export default function PassengerHome() {
               `Veyikil: ${assigned.vehicle_brand} ${assigned.vehicle_model} (Koulè: ${assigned.vehicle_color}).\n` +
               contactCode
           );
+          setSearchingRide(false);
+          setDriverMarker(null);
         } else {
           Alert.alert('Siksè', scheduleEnabled ? 'Kous la pwograme.' : 'Demann kous ou voye! N ap chache chofè...');
+          setSearchingRide(true);
+          setFollowUser(true);
         }
         setEstimate(null);
         setDestination('');
+        setRouteCoords([]);
         setScheduleEnabled(false);
         setScheduledDate(new Date());
         setScheduledTime(new Date());
@@ -264,7 +508,51 @@ export default function PassengerHome() {
 
         {/* Map */}
         <View style={styles.mapPlaceholder}>
-          <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
+          {MapView && Marker && Polyline ? (
+            <MapView
+              ref={(ref) => {
+                mapRef.current = ref;
+              }}
+              style={styles.mapImage}
+              region={mapRegion}
+              showsUserLocation
+              showsMyLocationButton
+              loadingEnabled
+            >
+              {routeCoords.length > 1 && Polyline && (
+                <Polyline
+                  coordinates={routeCoords}
+                  strokeWidth={4}
+                  strokeColor={Colors.primary}
+                />
+              )}
+              {pickupCoords && Marker && (
+                <Marker
+                  coordinate={{ latitude: pickupCoords.lat, longitude: pickupCoords.lng }}
+                  pinColor={Colors.success}
+                />
+              )}
+              {destinationCoords && Marker && (
+                <Marker
+                  coordinate={{ latitude: destinationCoords.lat, longitude: destinationCoords.lng }}
+                  pinColor={Colors.primary}
+                />
+              )}
+              {driverMarker && Marker && (
+                <Marker coordinate={driverMarker}>
+                  <View style={styles.driverMarker}>
+                    <Ionicons
+                      name={driverVehicle === 'moto' ? 'bicycle' : 'car'}
+                      size={18}
+                      color="white"
+                    />
+                  </View>
+                </Marker>
+              )}
+            </MapView>
+          ) : (
+            <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
+          )}
           {nearbyDrivers.length > 0 && (
             <View style={styles.driversCount}>
               <Ionicons name="car" size={16} color="white" />
@@ -284,6 +572,7 @@ export default function PassengerHome() {
               placeholder="Pickup"
               value={pickup}
               onChangeText={setPickup}
+              onFocus={() => setShowPickupSuggestions(true)}
             />
           </View>
 
@@ -297,11 +586,42 @@ export default function PassengerHome() {
               style={styles.locationInput}
               placeholder="Ki kote ou vle ale?"
               value={destination}
-              onChangeText={setDestination}
+              onChangeText={(value) => {
+                setDestination(value);
+                setDestinationCoords(null);
+                setRouteCoords([]);
+              }}
               onFocus={() => setShowVehicleSelector(true)}
             />
           </View>
         </View>
+
+        {isSearchingPickup && (
+          <View style={styles.searchingBadge}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.searchingText}>Ap chèche...</Text>
+          </View>
+        )}
+
+        {pickupSuggestions.length > 0 && (
+          <View style={styles.suggestions}>
+            {pickupSuggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`}
+                style={styles.suggestionItem}
+                onPress={() => {
+                  setPickup(suggestion.label);
+                  setPickupCoords({ lat: suggestion.lat, lng: suggestion.lng });
+                  setPickupSuggestions([]);
+                  setShowPickupSuggestions(false);
+                }}
+              >
+                <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
+                <Text style={styles.suggestionText} numberOfLines={1}>{suggestion.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {isSearching && (
           <View style={styles.searchingBadge}>
@@ -314,15 +634,16 @@ export default function PassengerHome() {
           <View style={styles.suggestions}>
             {destinationSuggestions.map((suggestion) => (
               <TouchableOpacity
-                key={suggestion}
+                key={`${suggestion.label}-${suggestion.lat}-${suggestion.lng}`}
                 style={styles.suggestionItem}
                 onPress={() => {
-                  setDestination(suggestion);
+                  setDestination(suggestion.label);
+                  setDestinationCoords({ lat: suggestion.lat, lng: suggestion.lng });
                   setDestinationSuggestions([]);
                 }}
               >
                 <Ionicons name="location-outline" size={16} color={Colors.textSecondary} />
-                <Text style={styles.suggestionText} numberOfLines={1}>{suggestion}</Text>
+                <Text style={styles.suggestionText} numberOfLines={1}>{suggestion.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -519,6 +840,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+    paddingBottom: 28,
   },
   header: {
     flexDirection: 'row',
@@ -544,6 +866,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 4,
+    ...Shadows.small,
   },
   locationText: {
     fontSize: 13,
@@ -552,16 +875,26 @@ const styles = StyleSheet.create({
   mapPlaceholder: {
     height: 180,
     backgroundColor: Colors.surface,
-    borderRadius: 16,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
     overflow: 'hidden',
+    ...Shadows.medium,
   },
   mapImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+  },
+  driverMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.small,
   },
   driversCount: {
     position: 'absolute',
@@ -574,6 +907,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 6,
+    ...Shadows.small,
   },
   driversText: {
     color: 'white',
@@ -588,15 +922,16 @@ const styles = StyleSheet.create({
   vehicleOption: {
     flex: 1,
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: 'transparent',
+    ...Shadows.small,
   },
   vehicleSelected: {
     borderColor: Colors.primary,
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.surface,
   },
   vehicleText: {
     fontSize: 14,
@@ -606,9 +941,10 @@ const styles = StyleSheet.create({
   },
   inputsContainer: {
     backgroundColor: Colors.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 20,
+    ...Shadows.small,
   },
   searchingBadge: {
     flexDirection: 'row',
@@ -620,6 +956,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     alignSelf: 'flex-start',
     marginBottom: 12,
+    ...Shadows.small,
   },
   searchingText: {
     fontSize: 13,
@@ -634,9 +971,10 @@ const styles = StyleSheet.create({
   },
   scheduleCard: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 12,
     marginBottom: 20,
+    ...Shadows.small,
   },
   scheduleHeader: {
     flexDirection: 'row',
@@ -743,13 +1081,14 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   estimateButton: {
-    backgroundColor: Colors.secondary,
+    backgroundColor: Colors.primary,
     height: 56,
-    borderRadius: 12,
+    borderRadius: 16,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
+    ...Shadows.small,
   },
   disabledButton: {
     opacity: 0.7,
@@ -760,8 +1099,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   estimateCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     padding: 20,
     ...Shadows.medium,
   },
@@ -823,10 +1162,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   paymentOptionActive: {
     backgroundColor: Colors.primary,
@@ -847,10 +1187,11 @@ const styles = StyleSheet.create({
   cancelButton: {
     flex: 1,
     height: 50,
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   cancelButtonText: {
     fontSize: 16,
@@ -860,10 +1201,11 @@ const styles = StyleSheet.create({
   requestButton: {
     flex: 2,
     height: 50,
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.primary,
+    ...Shadows.small,
   },
   requestButtonText: {
     fontSize: 16,

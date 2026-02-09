@@ -20,6 +20,7 @@ import { Colors, Shadows } from '../../src/constants/colors';
 import { authAPI } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import { DEPARTMENT_CITIES, HAITI_DEPARTMENTS } from '../../src/constants/haiti';
+import { BRAND_ID } from '../../src/constants/brand';
 
 export default function RegisterPassenger() {
   const router = useRouter();
@@ -56,18 +57,52 @@ export default function RegisterPassenger() {
     return cities.filter((city) => city.toLowerCase().includes(term));
   }, [citySearch, form.department]);
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.5,
-      base64: true,
-    });
+  const openImagePicker = async (source: 'camera' | 'library') => {
+    try {
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè kamera.');
+          return;
+        }
+      } else if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè galri a.');
+          return;
+        }
+      }
 
-    if (!result.canceled && result.assets[0].base64) {
-      setForm({ ...form, profile_photo: `data:image/jpeg;base64,${result.assets[0].base64}` });
+      const picker =
+        source === 'camera'
+          ? ImagePicker.launchCameraAsync
+          : ImagePicker.launchImageLibraryAsync;
+
+      const result = await picker({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.6,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0]?.base64) {
+        setForm({ ...form, profile_photo: `data:image/jpeg;base64,${result.assets[0].base64}` });
+      }
+    } catch (error) {
+      Alert.alert('Erè', 'Pa kapab chwazi foto a');
     }
+  };
+
+  const pickImage = () => {
+    Alert.alert(
+      'Ajoute foto',
+      'Chwazi sous foto a',
+      [
+        { text: 'Galri', onPress: () => openImagePicker('library') },
+        { text: 'Kamera', onPress: () => openImagePicker('camera') },
+        { text: 'Anile', style: 'cancel' },
+      ]
+    );
   };
 
   const validateStep1 = () => {
@@ -110,6 +145,7 @@ export default function RegisterPassenger() {
         city: form.city,
         password: form.password,
         profile_photo: form.profile_photo || undefined,
+        admin_id: BRAND_ID || undefined,
       });
 
       if (response.data.success) {

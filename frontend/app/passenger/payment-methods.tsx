@@ -169,8 +169,8 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   card: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     ...Shadows.small,
     gap: 12,
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
     height: 50,
   },
@@ -206,9 +206,10 @@ const styles = StyleSheet.create({
   saveButton: {
     marginTop: 6,
     backgroundColor: Colors.primary,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: 14,
+    borderRadius: 14,
     alignItems: 'center',
+    ...Shadows.small,
   },
   saveButtonDisabled: {
     opacity: 0.6,

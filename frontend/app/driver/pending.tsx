@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,36 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../../src/constants/colors';
+import { Colors, Shadows } from '../../src/constants/colors';
+import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/authStore';
+import { profileAPI } from '../../src/services/api';
 
 export default function DriverPending() {
+  const router = useRouter();
   const { user } = useAuthStore();
+
+  useEffect(() => {
+    let active = true;
+    const refreshProfile = async () => {
+      try {
+        const response = await profileAPI.get();
+        const nextUser = response.data?.user;
+        if (!active || !nextUser) return;
+        if (nextUser.status === 'approved') {
+          router.replace('/driver/home');
+        }
+      } catch (error) {
+        console.error('Profile refresh error:', error);
+      }
+    };
+    refreshProfile();
+    const timer = setInterval(refreshProfile, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [router]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -91,11 +116,12 @@ const styles = StyleSheet.create({
   },
   statusCard: {
     backgroundColor: Colors.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 20,
     width: '100%',
     gap: 16,
     marginBottom: 24,
+    ...Shadows.small,
   },
   statusRow: {
     flexDirection: 'row',

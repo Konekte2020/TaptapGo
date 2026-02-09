@@ -1,12 +1,12 @@
 export const Colors = {
   primary: '#E53935',      // TapTapGo Red
   secondary: '#1E3A5F',    // TapTapGo Blue
-  background: '#FFFFFF',
-  surface: '#F5F5F5',
-  text: '#212121',
-  textSecondary: '#757575',
+  background: '#F4F6F9',
+  surface: '#FFFFFF',
+  text: '#1A1F2B',
+  textSecondary: '#6B7280',
   textLight: '#FFFFFF',
-  border: '#E0E0E0',
+  border: '#E6E9EF',
   success: '#4CAF50',
   warning: '#FF9800',
   error: '#F44336',
@@ -22,23 +22,23 @@ export const Colors = {
 export const Shadows = {
   small: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   medium: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 5,
   },
   large: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
     elevation: 8,
   },
 };

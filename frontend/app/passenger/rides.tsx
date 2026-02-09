@@ -199,8 +199,9 @@ const styles = StyleSheet.create({
   filterButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 18,
     backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   filterActive: {
     backgroundColor: Colors.primary,
@@ -218,8 +219,8 @@ const styles = StyleSheet.create({
     paddingTop: 0,
   },
   rideCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     ...Shadows.small,
@@ -295,12 +296,13 @@ const styles = StyleSheet.create({
   cancelButton: {
     marginTop: 10,
     backgroundColor: Colors.error,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 14,
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 6,
+    ...Shadows.small,
   },
   cancelButtonText: {
     color: 'white',

@@ -20,6 +20,7 @@ import { Colors, Shadows } from '../../src/constants/colors';
 import { authAPI, vehicleAPI } from '../../src/services/api';
 import { useAuthStore } from '../../src/store/authStore';
 import { DEPARTMENT_CITIES, HAITI_DEPARTMENTS } from '../../src/constants/haiti';
+import { BRAND_ID } from '../../src/constants/brand';
 
 export default function RegisterDriver() {
   const router = useRouter();
@@ -98,18 +99,55 @@ export default function RegisterDriver() {
     }
   };
 
-  const pickImage = async (field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers') => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: field === 'profile_photo' ? [1, 1] : [4, 3],
-      quality: 0.5,
-      base64: true,
-    });
+  const openImagePicker = async (
+    field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers',
+    source: 'camera' | 'library'
+  ) => {
+    try {
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè kamera.');
+          return;
+        }
+      } else if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè galri a.');
+          return;
+        }
+      }
 
-    if (!result.canceled && result.assets[0].base64) {
-      setForm({ ...form, [field]: `data:image/jpeg;base64,${result.assets[0].base64}` });
+      const picker =
+        source === 'camera'
+          ? ImagePicker.launchCameraAsync
+          : ImagePicker.launchImageLibraryAsync;
+
+      const result = await picker({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.6,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0]?.base64) {
+        setForm({ ...form, [field]: `data:image/jpeg;base64,${result.assets[0].base64}` });
+      }
+    } catch (error) {
+      Alert.alert('Erè', 'Pa kapab chwazi foto a');
     }
+  };
+
+  const pickImage = (field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers') => {
+    Alert.alert(
+      'Ajoute foto',
+      'Chwazi sous foto a',
+      [
+        { text: 'Galri', onPress: () => openImagePicker(field, 'library') },
+        { text: 'Kamera', onPress: () => openImagePicker(field, 'camera') },
+        { text: 'Anile', style: 'cancel' },
+      ]
+    );
   };
 
   const validateStep1 = () => {
@@ -163,6 +201,7 @@ export default function RegisterDriver() {
         vehicle_papers: form.vehicle_papers || undefined,
         profile_photo: form.profile_photo || undefined,
         password: form.password,
+        admin_id: BRAND_ID || undefined,
       });
 
       if (response.data.success) {

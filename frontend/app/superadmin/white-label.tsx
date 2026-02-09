@@ -13,12 +13,21 @@ import {
   Image,
   Modal,
   Linking,
+  Platform,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
-import { adminAPI } from '../../src/services/api';
-import { DEPARTMENT_CITIES, HAITI_DEPARTMENTS } from '../../src/constants/haiti';
+import { adminAPI, API_URL, buildAPI } from '../../src/services/api';
+import {
+  DEPARTMENT_CITIES,
+  HAITI_DEPARTMENTS,
+  LEGACY_DEPARTMENT_CITIES,
+  LEGACY_DEPARTMENT_MAP,
+  normalizeHaitiCity,
+  normalizeHaitiDepartment,
+} from '../../src/constants/haiti';
 
 export default function SuperAdminWhiteLabel() {
   const phonePrefix = '+509 ';
@@ -30,6 +39,7 @@ export default function SuperAdminWhiteLabel() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [createdBrandName, setCreatedBrandName] = useState('');
+  const [createError, setCreateError] = useState('');
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [forcePasswordChange, setForcePasswordChange] = useState(true);
@@ -48,6 +58,20 @@ export default function SuperAdminWhiteLabel() {
   const [testModalVisible, setTestModalVisible] = useState(false);
   const [publishModalVisible, setPublishModalVisible] = useState(false);
   const [publishTarget, setPublishTarget] = useState<'appstore' | 'playstore' | null>(null);
+  const [previewActionMessage, setPreviewActionMessage] = useState('');
+  const [currentBuild, setCurrentBuild] = useState<{
+    id: string;
+    status: string;
+    progress: number;
+    message?: string;
+    apk_url?: string;
+    error?: string;
+  } | null>(null);
+  const [buildHistory, setBuildHistory] = useState<any[]>([]);
+  const [buildModalVisible, setBuildModalVisible] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+  const [relaunchingBuild, setRelaunchingBuild] = useState(false);
+  const [clearingFailed, setClearingFailed] = useState(false);
   const [timeline, setTimeline] = useState([
     { key: 'brief', label: 'Brief & planifikasyon', status: 'an preparasyon', date: '—' },
     { key: 'design', label: 'Design & branding', status: 'an preparasyon', date: '—' },
@@ -93,23 +117,65 @@ export default function SuperAdminWhiteLabel() {
     []
   );
 
+
   useEffect(() => {
     fetchBrands();
+    fetchBuildHistory();
   }, []);
+
+  useEffect(() => {
+    if (!currentBuild || currentBuild.status === 'success' || currentBuild.status === 'failed') {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await buildAPI.getBuildStatus(currentBuild.id);
+        const updatedBuild = response.data.build;
+        setCurrentBuild(updatedBuild);
+
+        if (updatedBuild.status === 'success') {
+          Alert.alert('Siksè! 🎉', 'APK la pare! Ou ka telechaje li kounye a.');
+          updateTimelineStatus([
+            { key: 'build', status: 'fini' },
+            { key: 'qa', status: 'pare pou tès' },
+          ]);
+          fetchBuildHistory();
+        } else if (updatedBuild.status === 'failed') {
+          Alert.alert('Erè ❌', `Build la echwe: ${updatedBuild.error || 'Erè enkonni'}`);
+        }
+      } catch (error) {
+        console.error('Status check error:', error);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [currentBuild]);
 
   const fetchBrands = async () => {
     setLoading(true);
     try {
       const response = await adminAPI.getAllAdmins();
       const admins = response.data.admins || [];
-      const filtered = admins.filter((admin: any) =>
-        admin.brand_name && String(admin.brand_name).trim().length > 0
-      );
+      const filtered = admins.filter((admin: any) => {
+        const hasBrandName = admin.brand_name && String(admin.brand_name).trim().length > 0;
+        const hasBrandAssets = !!(admin.logo || admin.primary_color || admin.secondary_color || admin.tertiary_color);
+        return hasBrandName || hasBrandAssets;
+      });
       setBrands(filtered);
     } catch (error) {
       console.error('Fetch white label error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBuildHistory = async () => {
+    try {
+      const response = await buildAPI.listBuilds();
+      setBuildHistory(response.data.builds || []);
+    } catch (error) {
+      console.error('Fetch build history error:', error);
     }
   };
 
@@ -162,6 +228,23 @@ export default function SuperAdminWhiteLabel() {
     setForm({ ...form, phone: normalized });
   };
 
+  const generateTempPassword = (length = 10) => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let result = '';
+    for (let i = 0; i < length; i += 1) {
+      result += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return result;
+  };
+
+  const handleGeneratePassword = () => {
+    const password = generateTempPassword();
+    setForm({ ...form, tempPassword: password });
+    Alert.alert('Siksè', 'Modpas tanporè a jenere.');
+  };
+
+
+
   const previewSource = previewData || {
     companyName: form.companyName,
     primaryColor: form.primaryColor,
@@ -174,24 +257,58 @@ export default function SuperAdminWhiteLabel() {
     for (const [dept, cities] of Object.entries(DEPARTMENT_CITIES)) {
       if (cities.includes(cityName)) return dept;
     }
+    const lower = cityName.toLowerCase();
+    for (const [legacyDept, legacyCities] of Object.entries(LEGACY_DEPARTMENT_CITIES)) {
+      if (legacyCities.some((city) => city.toLowerCase() === lower)) {
+        return LEGACY_DEPARTMENT_MAP[legacyDept] || '';
+      }
+    }
     return '';
   };
 
+  const applyTemplateFromBrand = (brand: any) => {
+    const rawCity = brand?.cities?.[0] || '';
+    const city = normalizeHaitiCity(rawCity);
+    const dept = city ? getDepartmentForCity(city) : normalizeHaitiDepartment(brand?.department || '');
+    setEditingBrand(null);
+    setForm({
+      companyName: '',
+      representativeName: '',
+      phone: phonePrefix,
+      email: '',
+      tempPassword: generateTempPassword(),
+      primaryColor: brand?.primary_color || '#E53935',
+      secondaryColor: brand?.secondary_color || '#1E3A5F',
+      tertiaryColor: brand?.tertiary_color || '#F4B400',
+      logo: brand?.logo || '',
+    });
+    setSelectedDepartment(dept);
+    setSelectedCity(city);
+    setDepartmentOpen(false);
+    setCityOpen(false);
+    setCitySearch('');
+    setForcePasswordChange(true);
+  };
+
   const handleCreateBrand = async () => {
+    setCreateError('');
     if (!editingBrand && !canCreateBrand) {
-      const remaining = checklist.filter((c) => !c.done).map((c) => `• ${c.label}`).join('\n');
-      Alert.alert('Erè', `Fini tout tès yo avan ou kreye mak la.\n\n${remaining}`);
+      setCreateError('Tanpri ranpli tout chan obligatwa yo avan ou kreye mak la.');
+      Alert.alert('Erè', 'Tanpri ranpli tout chan obligatwa yo avan ou kreye mak la.');
       return;
     }
     if (!form.companyName || !form.representativeName || !form.phone || !form.email || (!editingBrand && !form.tempPassword)) {
+      setCreateError('Tanpri ranpli tout chan obligatwa yo');
       Alert.alert('Erè', 'Tanpri ranpli tout chan obligatwa yo');
       return;
     }
     if (!selectedCity) {
+      setCreateError('Chwazi yon vil');
       Alert.alert('Erè', 'Chwazi yon vil');
       return;
     }
     if (!selectedDepartment) {
+      setCreateError('Chwazi yon depatman');
       Alert.alert('Erè', 'Chwazi yon depatman');
       return;
     }
@@ -240,10 +357,285 @@ export default function SuperAdminWhiteLabel() {
       setEditingBrand(null);
       fetchBrands();
     } catch (error: any) {
-      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab kreye mak la');
+      const message = error.response?.data?.detail || 'Pa kapab kreye mak la';
+      setCreateError(message);
+      Alert.alert('Erè', message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleGenerateAPK = async (
+    forceRebuild = false,
+    localOnly = false,
+    buildMode: 'local' | 'cloud' = 'local'
+  ) => {
+    if (!createdBrandName) {
+      Alert.alert('Erè', 'Tanpri kreye mak la avan ou jenere APK la.');
+      return;
+    }
+
+    const brand = brands.find((item) => item.brand_name === createdBrandName);
+    if (!brand) {
+      Alert.alert('Erè', 'Mak la pa jwenn nan sistèm nan.');
+      return;
+    }
+
+    if (!brand.logo) {
+      Alert.alert('Erè', 'Tanpri ajoute yon logo avan ou jenere APK la.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      if (!forceRebuild) {
+        const historyResponse = await buildAPI.listBuilds(brand.id);
+        const builds = historyResponse.data.builds || [];
+        const sortedBuilds = [...builds].sort((a, b) => {
+          const aDate = new Date(a.created_at || 0).getTime();
+          const bDate = new Date(b.created_at || 0).getTime();
+          return bDate - aDate;
+        });
+        const activeBuild = sortedBuilds.find((item) =>
+          ['queued', 'building', 'running', 'processing'].includes(String(item.status))
+        );
+        if (activeBuild) {
+          setCurrentBuild({
+            id: activeBuild.id,
+            status: activeBuild.status || 'queued',
+            progress: activeBuild.progress || 0,
+            message: activeBuild.message || 'Build deja an pwogrè...',
+            apk_url: activeBuild.apk_url,
+          });
+          setBuildModalVisible(true);
+          Alert.alert('Build deja an pwogrè', 'Gen yon build ki deja ap mache pou mak sa a.');
+          return;
+        }
+
+        const latestSuccess = sortedBuilds.find((item) => item.status === 'success' && item.apk_url);
+        if (latestSuccess) {
+          Alert.alert(
+            'APK deja pare',
+            'Nou jwenn yon APK ki deja pare pou mak sa a. Ou vle telechaje li oswa rebati?',
+            [
+              {
+                text: 'Telechaje',
+                onPress: () => handleDownloadAPK(false, latestSuccess, brand.brand_name),
+              },
+              {
+                text: 'Rebati',
+                style: 'destructive',
+                onPress: () => handleGenerateAPK(true),
+              },
+              { text: 'Anile', style: 'cancel' },
+            ]
+          );
+          return;
+        }
+      }
+
+      const response = await buildAPI.generateBuild({
+        brand_id: brand.id,
+        company_name: brand.brand_name,
+        logo: brand.logo,
+        primary_color: brand.primary_color || '#E53935',
+        secondary_color: brand.secondary_color || '#1E3A5F',
+        tertiary_color: brand.tertiary_color || '#F4B400',
+        local_only: localOnly,
+        build_mode: buildMode,
+      });
+
+      const buildId = response.data.build_id;
+      setCurrentBuild({
+        id: buildId,
+        status: 'queued',
+        progress: 0,
+        message: 'Preparation...',
+      });
+
+      setBuildModalVisible(true);
+      Alert.alert(
+        'Build lanse! 🚀',
+        buildMode === 'cloud'
+          ? 'Build rapid (cloud) lanse. Ouvri lyen an pou swiv li.'
+          : localOnly
+            ? 'Build lokal lanse. APK la ap prepare sou sèvè a.'
+            : 'APK la ap prepare. Ou ka suiv pwogrè a nan modal la.'
+      );
+      updateTimelineStatus([{ key: 'build', status: 'an pwogrè' }]);
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab lanse build la');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearBuildCache = async () => {
+    if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
+      Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou netwaye cache la.');
+      return;
+    }
+    Alert.alert(
+      'Netwaye cache build',
+      'Sa ap efase dosye tanporè yo ak log build yo. Ou vle kontinye?',
+      [
+        { text: 'Anile', style: 'cancel' },
+        {
+          text: 'Wi, netwaye',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setClearingCache(true);
+              await buildAPI.clearBuildCache();
+              Alert.alert('Siksè', 'Cache build la netwaye.');
+            } catch (error: any) {
+              Alert.alert('Erè', error.response?.data?.detail || 'Netwayaj echwe');
+            } finally {
+              setClearingCache(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearAndRelaunch = async () => {
+    if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
+      Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou relanse.');
+      return;
+    }
+    if (!createdBrandName) {
+      Alert.alert('Erè', 'Tanpri kreye mak la avan ou relanse build la.');
+      return;
+    }
+    Alert.alert(
+      'Netwaye + relanse',
+      'Sa ap efase cache build la epi lanse yon nouvo build. Ou vle kontinye?',
+      [
+        { text: 'Anile', style: 'cancel' },
+        {
+          text: 'Wi, kontinye',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setRelaunchingBuild(true);
+              await buildAPI.clearBuildCache();
+              await handleGenerateAPK(true);
+            } catch (error: any) {
+              Alert.alert('Erè', error.response?.data?.detail || 'Relansman echwe');
+            } finally {
+              setRelaunchingBuild(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearFailedBuilds = async () => {
+    Alert.alert(
+      'Efase build echwe yo',
+      'Sa ap efase tout build ki echwe yo nan list istorik la. Ou vle kontinye?',
+      [
+        { text: 'Anile', style: 'cancel' },
+        {
+          text: 'Wi, efase',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setClearingFailed(true);
+              await buildAPI.clearFailedBuilds();
+              await fetchBuildHistory();
+              Alert.alert('Siksè', 'Build echwe yo efase.');
+            } catch (error: any) {
+              Alert.alert('Erè', error.response?.data?.detail || 'Efase echwe');
+            } finally {
+              setClearingFailed(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const getApkUrl = (apkUrl?: string) => {
+    if (!apkUrl) return '';
+    if (apkUrl.startsWith('http://') || apkUrl.startsWith('https://')) {
+      return apkUrl;
+    }
+    const baseUrl = API_URL || 'http://localhost:8000';
+    return `${baseUrl}${apkUrl}`;
+  };
+
+  const handleDownloadAPK = async (openAfter = false, buildOverride?: any, brandNameOverride?: string) => {
+    const targetBuild = buildOverride || currentBuild;
+    if (!targetBuild?.id) {
+      Alert.alert('Erè', 'APK la pa disponib ankò.');
+      return;
+    }
+
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const response = await buildAPI.downloadBuild(targetBuild.id);
+        const blob = new Blob([response.data], {
+          type: 'application/vnd.android.package-archive',
+        });
+        const url = window.URL.createObjectURL(blob);
+        if (openAfter) {
+          window.open(url, '_blank');
+        } else {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `${brandNameOverride || previewSource.companyName || 'app'}-release.apk`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        setTimeout(() => window.URL.revokeObjectURL(url), 30000);
+        return;
+      }
+
+      if (!targetBuild.apk_url) {
+        Alert.alert('Erè', 'Lyen APK pa disponib.');
+        return;
+      }
+
+      const downloadUrl = getApkUrl(targetBuild.apk_url);
+      Linking.openURL(downloadUrl);
+      Alert.alert('Telechajman lanse', 'APK la ap telechaje. Tcheke dosye Downloads ou.');
+    } catch (error) {
+      console.error('Download APK error:', error);
+      Alert.alert('Erè', 'Pa kapab telechaje APK la kounye a.');
+    }
+  };
+
+  const handleOpenCloudBuild = async (buildOverride?: any) => {
+    const targetBuild = buildOverride || currentBuild;
+    if (!targetBuild?.apk_url) {
+      Alert.alert('Erè', 'Lyen build la pa disponib.');
+      return;
+    }
+    const link = getApkUrl(targetBuild.apk_url);
+    Linking.openURL(link);
+  };
+
+  const handlePreviewAction = (screen: string) => {
+    setPreviewActionMessage(`Ou klike sou: ${screen}`);
+  };
+
+  const handleCopyLink = async (apkUrl?: string) => {
+    if (!apkUrl) {
+      Alert.alert('Erè', 'Lyen APK pa disponib.');
+      return;
+    }
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(apkUrl);
+      Alert.alert('Siksè', 'Lyen an kopye!');
+      return;
+    }
+    await Share.share({ message: apkUrl, url: apkUrl });
+    Alert.alert('Siksè', 'Lyen an pare pou pataje.');
   };
 
   const handleTestBrand = () => {
@@ -252,8 +644,9 @@ export default function SuperAdminWhiteLabel() {
   };
 
   const handleEditBrand = (brand: any) => {
-    const city = brand.cities?.[0] || '';
-    const dept = city ? getDepartmentForCity(city) : '';
+    const rawCity = brand.cities?.[0] || '';
+    const city = normalizeHaitiCity(rawCity);
+    const dept = city ? getDepartmentForCity(city) : normalizeHaitiDepartment(brand?.department || '');
     setEditingBrand(brand);
     setForm({
       companyName: brand.brand_name || '',
@@ -272,6 +665,7 @@ export default function SuperAdminWhiteLabel() {
     setCityOpen(false);
     setCitySearch('');
   };
+
 
   const handlePreviewBrand = (brand: any) => {
     setPreviewData({
@@ -303,6 +697,18 @@ export default function SuperAdminWhiteLabel() {
       return;
     }
     setTestModalVisible(true);
+  };
+
+  const handleMarkQADone = () => {
+    if (!createdBrandName) {
+      Alert.alert('Erè', 'Tanpri kreye mak la avan ou valide tès yo.');
+      return;
+    }
+    updateTimelineStatus([
+      { key: 'qa', status: 'fini' },
+      { key: 'store', status: 'pare pou soumèt' },
+    ]);
+    Alert.alert('Siksè', 'Tès yo make fini. Ou ka pibliye kounye a.');
   };
 
   const handleOpenPublishPortal = (target: 'appstore' | 'playstore') => {
@@ -371,7 +777,16 @@ export default function SuperAdminWhiteLabel() {
     return { total, done, percent: total ? Math.round((done / total) * 100) : 0 };
   }, [checklist]);
 
-  const canCreateBrand = checklistProgress.done === checklistProgress.total;
+  const canCreateBrand = !!form.companyName &&
+    !!form.representativeName &&
+    !!form.phone &&
+    !!form.email &&
+    !!form.primaryColor &&
+    !!form.secondaryColor &&
+    !!form.tertiaryColor &&
+    !!form.logo &&
+    !!selectedDepartment &&
+    !!selectedCity;
   const canPublish = checklist
     .filter((item) => item.key !== 'stores')
     .every((item) => item.done);
@@ -392,8 +807,8 @@ export default function SuperAdminWhiteLabel() {
       Alert.alert('Erè', 'Tanpri kreye mak la avan ou jenere pakè a.');
       return;
     }
-    if (!canCreateBrand) {
-      Alert.alert('Erè', 'Fini tout tès yo avan ou jenere pakè a.');
+    if (!canPublish) {
+      Alert.alert('Erè', 'Fini tès yo avan ou jenere pakè a.');
       return;
     }
     const url =
@@ -642,6 +1057,14 @@ export default function SuperAdminWhiteLabel() {
                   onChangeText={(text) => setForm({ ...form, tempPassword: text })}
                   secureTextEntry
                 />
+                {!editingBrand && (
+                  <View style={styles.passwordActionsRow}>
+                    <Pressable style={styles.passwordButton} onPress={handleGeneratePassword}>
+                      <Ionicons name="refresh" size={14} color="white" />
+                      <Text style={styles.passwordButtonText}>Jenere modpas</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
               <View style={styles.inlineField}>
                 <Text style={styles.fieldLabel}>Obligatwa chanje</Text>
@@ -712,9 +1135,9 @@ export default function SuperAdminWhiteLabel() {
 
             <View style={styles.buttonRow}>
               <Pressable
-                style={[styles.primaryButton, (saving || (!canCreateBrand && !editingBrand)) && styles.buttonDisabled]}
-                onPress={handleCreateBrand}
-                disabled={saving || (!canCreateBrand && !editingBrand)}
+                style={[styles.primaryButton, saving && styles.buttonDisabled]}
+                onPress={() => handleCreateBrand()}
+                disabled={saving}
               >
                 <Text style={styles.primaryButtonText}>
                   {saving ? 'Ap kreye...' : editingBrand ? 'Mete ajou Mak la' : 'Kreye Mak Pèsonèl'}
@@ -737,7 +1160,12 @@ export default function SuperAdminWhiteLabel() {
             </View>
             {!editingBrand && !canCreateBrand && (
               <Text style={styles.blockedText}>
-                Fini checklist pwodiksyon an avan ou kreye mak la.
+                Ranpli tout chan obligatwa yo pou kreye mak la.
+              </Text>
+            )}
+            {!!createError && (
+              <Text style={styles.errorText}>
+                {createError}
               </Text>
             )}
 
@@ -809,51 +1237,188 @@ export default function SuperAdminWhiteLabel() {
             </View>
 
             <View style={styles.deliveryCard}>
-              <Text style={styles.sectionTitle}>Pakè Livrezon</Text>
+              <Text style={styles.sectionTitle}>Jenere APK</Text>
               <Text style={styles.sectionHint}>
-                Nou jenere pakè APK/IPA + assets pou mak la apre validasyon final.
+                Klike sou bouton an pou jenere APK aplikasyon an pou kliyan an.
               </Text>
               <View style={styles.deliveryRow}>
                 <Pressable
-                  style={[styles.deliveryButton, (!createdBrandName || !canPublish) && styles.buttonDisabled]}
-                  disabled={!createdBrandName || !canPublish}
-                  onPress={() => handleGeneratePack('apk')}
+                  style={[
+                    styles.deliveryButton,
+                    styles.deliveryButtonPrimary,
+                    (!createdBrandName || saving) && styles.buttonDisabled,
+                  ]}
+                  disabled={!createdBrandName || saving}
+                  onPress={() => handleGenerateAPK()}
                 >
-                  <Ionicons name="download" size={16} color="white" />
-                  <Text style={styles.deliveryText}>Jenere APK</Text>
+                  <Ionicons name="construct" size={16} color="white" />
+                  <Text style={styles.deliveryText}>{saving ? 'Ap lanse...' : 'Jenere APK'}</Text>
                 </Pressable>
                 <Pressable
-                  style={[styles.deliveryButton, (!createdBrandName || !canPublish) && styles.buttonDisabled]}
-                  disabled={!createdBrandName || !canPublish}
-                  onPress={() => handleGeneratePack('ipa')}
+                  style={[
+                    styles.deliveryButton,
+                    styles.deliveryButtonSecondary,
+                    (clearingCache || relaunchingBuild) && styles.buttonDisabled,
+                  ]}
+                  disabled={clearingCache || relaunchingBuild}
+                  onPress={handleClearBuildCache}
                 >
-                  <Ionicons name="download" size={16} color="white" />
-                  <Text style={styles.deliveryText}>Jenere IPA</Text>
+                  <Ionicons name="trash-outline" size={16} color="white" />
+                  <Text style={styles.deliveryText}>
+                    {clearingCache ? 'Ap netwaye...' : 'Netwaye build cache'}
+                  </Text>
                 </Pressable>
                 <Pressable
-                  style={[styles.deliveryButton, (!createdBrandName || !canPublish) && styles.buttonDisabled]}
-                  disabled={!createdBrandName || !canPublish}
-                  onPress={() => handleGeneratePack('assets')}
+                  style={[
+                    styles.deliveryButton,
+                    styles.deliveryButtonSecondary,
+                    (relaunchingBuild || saving) && styles.buttonDisabled,
+                  ]}
+                  disabled={relaunchingBuild || saving}
+                  onPress={handleClearAndRelaunch}
                 >
-                  <Ionicons name="download" size={16} color="white" />
-                  <Text style={styles.deliveryText}>Assets Brand</Text>
+                  <Ionicons name="refresh" size={16} color="white" />
+                  <Text style={styles.deliveryText}>
+                    {relaunchingBuild ? 'Ap relanse...' : 'Netwaye + relanse'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.deliveryButton,
+                    styles.deliveryButtonSecondary,
+                    (!createdBrandName || saving) && styles.buttonDisabled,
+                  ]}
+                  disabled={!createdBrandName || saving}
+                  onPress={() => handleGenerateAPK(true, true)}
+                >
+                  <Ionicons name="laptop-outline" size={16} color="white" />
+                  <Text style={styles.deliveryText}>Build lokal</Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.deliveryButton,
+                    styles.deliveryButtonSecondary,
+                    (!createdBrandName || saving) && styles.buttonDisabled,
+                  ]}
+                  disabled={!createdBrandName || saving}
+                  onPress={() => handleGenerateAPK(true, false, 'cloud')}
+                >
+                  <Ionicons name="cloud-outline" size={16} color="white" />
+                  <Text style={styles.deliveryText}>Build rapid</Text>
                 </Pressable>
               </View>
+              {!createdBrandName && (
+                <Text style={styles.warningText}>
+                  ⚠️ Ou dwe kreye mak la avan ou jenere APK la
+                </Text>
+              )}
             </View>
+
+            {currentBuild && (
+              <View style={styles.buildCard}>
+                <View style={styles.buildCardHeader}>
+                  <Ionicons name="construct" size={20} color={Colors.primary} />
+                  <Text style={styles.sectionTitle}>Build APK an kous</Text>
+                </View>
+                <View style={styles.buildProgress}>
+                  <View style={styles.buildProgressBar}>
+                    <View
+                      style={[
+                        styles.buildProgressFill,
+                        {
+                          width: `${currentBuild.progress}%`,
+                          backgroundColor:
+                            currentBuild.status === 'failed'
+                              ? Colors.error
+                              : currentBuild.status === 'success'
+                                ? Colors.success
+                                : Colors.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.buildProgressInfo}>
+                    <Text style={styles.buildProgressText}>{currentBuild.progress}%</Text>
+                    <Text style={styles.buildStatusText}>
+                      {currentBuild.status === 'queued' && '⏳ An atant'}
+                      {currentBuild.status === 'building' && '🔨 Ap konstwi'}
+                      {currentBuild.status === 'success' && '✅ Fini'}
+                      {currentBuild.status === 'failed' && '❌ Echwe'}
+                    </Text>
+                  </View>
+                  {currentBuild.message && (
+                    <Text style={styles.buildMessage}>{currentBuild.message}</Text>
+                  )}
+                </View>
+
+                {currentBuild.status === 'success' && (
+                  <View style={styles.buildActionsRow}>
+                    <Pressable style={styles.downloadButton} onPress={() => handleDownloadAPK()}>
+                      <Ionicons name="download" size={16} color="white" />
+                      <Text style={styles.downloadButtonText}>Telechaje APK</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.shareButton}
+                      onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                    >
+                      <Ionicons name="copy-outline" size={16} color="white" />
+                      <Text style={styles.shareButtonText}>Kopye lyen</Text>
+                    </Pressable>
+                    <Pressable style={styles.openButton} onPress={() => handleDownloadAPK(true)}>
+                      <Ionicons name="open-outline" size={16} color="white" />
+                      <Text style={styles.shareButtonText}>Ouvri APK</Text>
+                    </Pressable>
+                  </View>
+                )}
+
+                {currentBuild.status !== 'success' && !!currentBuild.apk_url && (
+                  <View style={styles.buildActionsRow}>
+                    <Pressable style={styles.openButton} onPress={() => handleOpenCloudBuild()}>
+                      <Ionicons name="cloud-outline" size={16} color="white" />
+                      <Text style={styles.shareButtonText}>Ouvri build cloud</Text>
+                    </Pressable>
+                  </View>
+                )}
+
+                {currentBuild.status === 'failed' && (
+                  <View style={styles.buildErrorContainer}>
+                    <Ionicons name="alert-circle" size={16} color={Colors.error} />
+                    <Text style={styles.buildError}>
+                      {currentBuild.error || 'Erè enkonni'}
+                    </Text>
+                  </View>
+                )}
+
+                <Pressable style={styles.viewDetailsButton} onPress={() => setBuildModalVisible(true)}>
+                  <Text style={styles.viewDetailsText}>Gade detay</Text>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+                </Pressable>
+              </View>
+            )}
 
             <View style={styles.testCard}>
               <Text style={styles.sectionTitle}>Teste an dirèk</Text>
               <Text style={styles.sectionHint}>
                 Voye yon vèsyon tès bay kliyan an pou li verifye sistèm nan anvan livrezon final.
               </Text>
-              <Pressable
-                style={[styles.testButton, !createdBrandName && styles.buttonDisabled]}
-                disabled={!createdBrandName}
-                onPress={handleOpenLiveTest}
-              >
-                <Ionicons name="flask-outline" size={18} color="white" />
-                <Text style={styles.testButtonText}>Tester en direct</Text>
-              </Pressable>
+              <View style={styles.testActionsRow}>
+                <Pressable
+                  style={[styles.testButton, !createdBrandName && styles.buttonDisabled]}
+                  disabled={!createdBrandName}
+                  onPress={handleOpenLiveTest}
+                >
+                  <Ionicons name="flask-outline" size={18} color="white" />
+                  <Text style={styles.testButtonText}>Tester en direct</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.testButton, styles.testButtonSuccess, !createdBrandName && styles.buttonDisabled]}
+                  disabled={!createdBrandName}
+                  onPress={handleMarkQADone}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={18} color="white" />
+                  <Text style={styles.testButtonText}>Mete tès yo fini</Text>
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.publishCard}>
@@ -890,6 +1455,54 @@ export default function SuperAdminWhiteLabel() {
                     Mak "{createdBrandName}" pare pou piblikasyon.
                   </Text>
                 </View>
+              )}
+            </View>
+
+            <View style={styles.historyCard}>
+              <Text style={styles.sectionTitle}>Istwa Builds</Text>
+              <View style={[styles.historyActionsRow, { pointerEvents: 'box-none' }]}>
+                <Pressable
+                  style={[styles.historyClearButton, clearingFailed && styles.buttonDisabled]}
+                  disabled={clearingFailed}
+                  onPress={handleClearFailedBuilds}
+                >
+                  <Ionicons name="trash-outline" size={14} color="white" />
+                  <Text style={styles.historyClearText}>
+                    {clearingFailed ? 'Ap efase...' : 'Efase build echwe yo'}
+                  </Text>
+                </Pressable>
+              </View>
+              {buildHistory.length === 0 ? (
+                <Text style={styles.historyEmpty}>Pa gen build ankò.</Text>
+              ) : (
+                buildHistory.slice(0, 5).map((build) => (
+                  <View key={build.id} style={styles.historyRow}>
+                    <View>
+                      <Text style={styles.historyTitle}>
+                        {build.status === 'success'
+                          ? '✅ Siksè'
+                          : build.status === 'failed'
+                            ? '❌ Echwe'
+                            : build.status === 'building'
+                              ? '🔨 Ap konstwi'
+                              : '⏳ An atant'}
+                      </Text>
+                      <Text style={styles.historyMeta}>
+                        {build.created_at ? String(build.created_at).slice(0, 10) : '—'} • {build.progress || 0}%
+                      </Text>
+                    </View>
+                    <View style={styles.historyActions}>
+                      {!!build.apk_url && (
+                        <Pressable
+                          style={styles.historyButton}
+                          onPress={() => handleCopyLink(getApkUrl(build.apk_url))}
+                        >
+                          <Ionicons name="copy-outline" size={14} color="white" />
+                        </Pressable>
+                      )}
+                    </View>
+                  </View>
+                ))
               )}
             </View>
           </View>
@@ -959,6 +1572,130 @@ export default function SuperAdminWhiteLabel() {
       </ScrollView>
 
       <Modal
+        visible={buildModalVisible}
+        animationType="slide"
+        onRequestClose={() => setBuildModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Detay Build APK</Text>
+            <Pressable style={styles.modalCloseButton} onPress={() => setBuildModalVisible(false)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView style={styles.modalContent}>
+            {currentBuild && (
+              <View style={styles.buildDetailsCard}>
+                <View style={styles.buildDetailRow}>
+                  <Text style={styles.buildDetailLabel}>Estatistik:</Text>
+                  <Text
+                    style={[
+                      styles.buildDetailValue,
+                      {
+                        color:
+                          currentBuild.status === 'success'
+                            ? Colors.success
+                            : currentBuild.status === 'failed'
+                              ? Colors.error
+                              : currentBuild.status === 'building'
+                                ? Colors.primary
+                                : Colors.textSecondary,
+                      },
+                    ]}
+                  >
+                    {currentBuild.status === 'queued' && '⏳ An atant'}
+                    {currentBuild.status === 'building' && '🔨 Ap konstwi'}
+                    {currentBuild.status === 'success' && '✅ Siksè'}
+                    {currentBuild.status === 'failed' && '❌ Echwe'}
+                  </Text>
+                </View>
+
+                <View style={styles.buildDetailRow}>
+                  <Text style={styles.buildDetailLabel}>Pwogrè:</Text>
+                  <Text style={styles.buildDetailValue}>{currentBuild.progress}%</Text>
+                </View>
+
+                <View style={styles.buildProgressBarLarge}>
+                  <View
+                    style={[
+                      styles.buildProgressFillLarge,
+                      {
+                        width: `${currentBuild.progress}%`,
+                        backgroundColor:
+                          currentBuild.status === 'failed'
+                            ? Colors.error
+                            : currentBuild.status === 'success'
+                              ? Colors.success
+                              : Colors.primary,
+                      },
+                    ]}
+                  />
+                </View>
+
+                {currentBuild.message && (
+                  <View style={styles.buildDetailRow}>
+                    <Text style={styles.buildDetailLabel}>Mesaj:</Text>
+                    <Text style={styles.buildDetailValue}>{currentBuild.message}</Text>
+                  </View>
+                )}
+
+                {currentBuild.status === 'success' && (
+                  <>
+                    <View style={styles.buildSuccessIcon}>
+                      <Ionicons name="checkmark-circle" size={64} color={Colors.success} />
+                      <Text style={styles.buildSuccessText}>APK la pare! 🎉</Text>
+                    </View>
+
+                    <View style={styles.buildActionsRow}>
+                      <Pressable style={styles.downloadButtonLarge} onPress={() => handleDownloadAPK()}>
+                        <Ionicons name="download" size={20} color="white" />
+                        <Text style={styles.downloadButtonTextLarge}>Telechaje APK</Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.shareButtonLarge}
+                        onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                      >
+                        <Ionicons name="copy-outline" size={20} color="white" />
+                        <Text style={styles.shareButtonTextLarge}>Kopye lyen</Text>
+                      </Pressable>
+                        <Pressable style={styles.openButtonLarge} onPress={() => handleDownloadAPK(true)}>
+                        <Ionicons name="open-outline" size={20} color="white" />
+                        <Text style={styles.shareButtonTextLarge}>Ouvri APK</Text>
+                      </Pressable>
+                    </View>
+
+                    <View style={styles.buildInstructions}>
+                      <Text style={styles.buildInstructionsTitle}>Pwochen etap:</Text>
+                      <Text style={styles.buildInstructionsText}>
+                        1. Telechaje APK la{'\n'}
+                        2. Transfere li nan yon telefòn Android{'\n'}
+                        3. Enstale li epi teste aplikasyon an{'\n'}
+                        4. Si tout bagay bon, ou ka pibliye li sou Play Store
+                      </Text>
+                    </View>
+                  </>
+                )}
+
+                {currentBuild.status === 'failed' && (
+                  <View style={styles.buildErrorCard}>
+                    <Ionicons name="alert-circle" size={48} color={Colors.error} />
+                    <Text style={styles.buildErrorTitle}>Build la echwe</Text>
+                    <Text style={styles.buildErrorMessage}>
+                      {currentBuild.error || 'Erè enkonni'}
+                    </Text>
+                    <Pressable style={styles.retryButton} onPress={() => handleGenerateAPK()}>
+                      <Ionicons name="refresh" size={16} color="white" />
+                      <Text style={styles.retryButtonText}>Eseye ankò</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
         visible={previewVisible}
         animationType="slide"
         onRequestClose={() => {
@@ -995,6 +1732,20 @@ export default function SuperAdminWhiteLabel() {
           </View>
 
           <ScrollView contentContainerStyle={styles.previewModalContent}>
+            <View style={styles.previewActionBanner}>
+              <Text style={styles.previewActionBannerText}>
+                {previewActionMessage || 'Klike sou nenpòt bouton pou teste preview a.'}
+              </Text>
+              {!!currentBuild?.apk_url && (
+                <Pressable
+                  style={styles.previewActionLink}
+                  onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                >
+                  <Ionicons name="copy-outline" size={14} color="white" />
+                  <Text style={styles.previewActionLinkText}>Kopye lyen tès</Text>
+                </Pressable>
+              )}
+            </View>
             <View style={styles.previewGrid}>
               <View style={styles.previewPanel}>
                 <Text style={styles.previewPanelTitle}>Dashboard Admin</Text>
@@ -1044,6 +1795,18 @@ export default function SuperAdminWhiteLabel() {
                       </View>
                     ))}
                   </View>
+                  <Text style={styles.previewAdminSectionTitle}>Bouton yo</Text>
+                  <View style={styles.previewActionList}>
+                    {['Dashboard', 'Chofè', 'Pasajè', 'Plent', 'Profil', 'Ajoute Vil', 'Paramèt'].map((label) => (
+                      <Pressable
+                        key={label}
+                        style={styles.previewActionItem}
+                        onPress={() => handlePreviewAction(`Admin: ${label}`)}
+                      >
+                        <Text style={styles.previewActionItemText}>{label}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
                 </View>
               </View>
 
@@ -1072,8 +1835,19 @@ export default function SuperAdminWhiteLabel() {
                       <View style={styles.previewHomeCard} />
                       <View style={styles.previewHomeCard} />
                     </View>
-                    <View style={[styles.previewHomeAction, { backgroundColor: previewSource.primaryColor }]}>
-                      <Text style={styles.previewHomeActionText}>Kòmanse travay</Text>
+                    <View style={styles.previewButtonRow}>
+                      <Pressable
+                        style={[styles.previewHomeAction, { backgroundColor: previewSource.primaryColor }]}
+                        onPress={() => handlePreviewAction('Chofè: Kòmanse travay')}
+                      >
+                        <Text style={styles.previewHomeActionText}>Kòmanse travay</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.previewHomeAction, { backgroundColor: previewSource.secondaryColor }]}
+                        onPress={() => handlePreviewAction('Chofè: Gade kous')}
+                      >
+                        <Text style={styles.previewHomeActionText}>Gade kous</Text>
+                      </Pressable>
                     </View>
                   </View>
                   <View style={styles.phoneTabs}>
@@ -1111,8 +1885,19 @@ export default function SuperAdminWhiteLabel() {
                     <View style={styles.previewHomeCards}>
                       <View style={styles.previewHomeCard} />
                     </View>
-                    <View style={[styles.previewHomeAction, { backgroundColor: previewSource.primaryColor }]}>
-                      <Text style={styles.previewHomeActionText}>Mande kous</Text>
+                    <View style={styles.previewButtonRow}>
+                      <Pressable
+                        style={[styles.previewHomeAction, { backgroundColor: previewSource.primaryColor }]}
+                        onPress={() => handlePreviewAction('Pasajè: Mande kous')}
+                      >
+                        <Text style={styles.previewHomeActionText}>Mande kous</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.previewHomeAction, { backgroundColor: previewSource.secondaryColor }]}
+                        onPress={() => handlePreviewAction('Pasajè: Estime pri')}
+                      >
+                        <Text style={styles.previewHomeActionText}>Estime pri</Text>
+                      </Pressable>
                     </View>
                   </View>
                   <View style={styles.phoneTabs}>
@@ -1193,24 +1978,15 @@ export default function SuperAdminWhiteLabel() {
           <View style={styles.publishModal}>
             <Text style={styles.publishTitle}>Tester an dirèk</Text>
             <Text style={styles.publishSubtitle}>
-              Nou pral lanse yon build tès pou kliyan an. Konekte, kreye build la, epi pataje lyen an.
+              Lanse yon build tès reyèl epi pataje lyen APK la ak kliyan an.
             </Text>
             <View style={styles.publishActions}>
               <Pressable
-                style={styles.publishActionButton}
-                onPress={() => Linking.openURL('https://expo.dev/login')}
-              >
-                <Ionicons name="log-in-outline" size={18} color="white" />
-                <Text style={styles.publishActionText}>Konekte Expo</Text>
-              </Pressable>
-              <Pressable
                 style={[styles.publishActionButton, { backgroundColor: '#6C47FF' }]}
-                onPress={() => {
-                  Linking.openURL('https://expo.dev/builds');
-                  updateTimelineStatus([
-                    { key: 'build', status: 'fini' },
-                    { key: 'qa', status: 'an tès' },
-                  ]);
+                onPress={async () => {
+                  await handleGenerateAPK();
+                  setTestModalVisible(false);
+                  setBuildModalVisible(true);
                 }}
               >
                 <Ionicons name="construct-outline" size={18} color="white" />
@@ -1229,8 +2005,17 @@ export default function SuperAdminWhiteLabel() {
                 <Text style={styles.publishActionText}>Tès kliyan fini</Text>
               </Pressable>
             </View>
+                {!!currentBuild?.apk_url && (
+                  <Pressable
+                    style={[styles.shareButton, { marginTop: 10 }]}
+                    onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                  >
+                    <Ionicons name="copy-outline" size={16} color="white" />
+                    <Text style={styles.shareButtonText}>Kopye lyen tès</Text>
+                  </Pressable>
+                )}
             <Text style={styles.publishNote}>
-              Apre build la fin pare, ou ka pataje lyen tès la ak kliyan an (Android/iOS).
+              Build tès la ap fèt sou sèvè a. Lè li fini, w ap jwenn lyen APK pou kliyan an.
             </Text>
             <Pressable style={styles.publishClose} onPress={() => setTestModalVisible(false)}>
               <Text style={styles.publishCloseText}>Fèmen</Text>
@@ -1679,6 +2464,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#6C47FF',
   },
+  testActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  testButtonSuccess: {
+    backgroundColor: Colors.success,
+  },
   testButtonText: {
     color: 'white',
     fontSize: 13,
@@ -1702,6 +2495,372 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 12,
     fontWeight: '600',
+  },
+  deliveryButtonPrimary: {
+    backgroundColor: Colors.primary,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  deliveryButtonSecondary: {
+    backgroundColor: Colors.textSecondary,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  warningText: {
+    fontSize: 12,
+    color: Colors.warning,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  buildCard: {
+    marginTop: 16,
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    padding: 16,
+    ...Shadows.medium,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  buildCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  buildProgress: {
+    marginTop: 8,
+  },
+  buildProgressBar: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
+  },
+  buildProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  buildProgressInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  buildProgressText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  buildStatusText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  buildMessage: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 6,
+    fontStyle: 'italic',
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 12,
+    backgroundColor: Colors.success,
+    borderRadius: 10,
+  },
+  downloadButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  buildActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  shareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+  },
+  openButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.secondary,
+    borderRadius: 10,
+  },
+  shareButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  buildErrorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: Colors.error + '15',
+    borderRadius: 10,
+  },
+  buildError: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.error,
+  },
+  viewDetailsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  viewDetailsText: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  modalCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  buildDetailsCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 20,
+    ...Shadows.small,
+  },
+  buildDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  buildDetailLabel: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  buildDetailValue: {
+    fontSize: 14,
+    color: Colors.text,
+    fontWeight: '600',
+  },
+  buildProgressBarLarge: {
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
+    marginVertical: 16,
+  },
+  buildProgressFillLarge: {
+    height: '100%',
+    borderRadius: 6,
+  },
+  buildSuccessIcon: {
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  buildSuccessText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.success,
+    marginTop: 12,
+  },
+  downloadButtonLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    backgroundColor: Colors.success,
+    borderRadius: 12,
+    marginVertical: 12,
+  },
+  downloadButtonTextLarge: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  shareButtonLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+  },
+  openButtonLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: Colors.secondary,
+    borderRadius: 12,
+  },
+  shareButtonTextLarge: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  buildInstructions: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: Colors.background,
+    borderRadius: 12,
+  },
+  buildInstructionsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  buildInstructionsText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+  },
+  buildErrorCard: {
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  buildErrorTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.error,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  buildErrorMessage: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  historyCard: {
+    marginTop: 16,
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    padding: 16,
+    ...Shadows.small,
+    gap: 12,
+    zIndex: 1,
+  },
+  historyActionsRow: {
+    marginTop: 6,
+    marginBottom: 6,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    zIndex: 2,
+  },
+  historyClearButton: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.error,
+    zIndex: 3,
+    elevation: 2,
+  },
+  historyClearText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  historyEmpty: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  historyTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  historyMeta: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  historyActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  historyButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
   },
   publishRow: {
     flexDirection: 'row',
@@ -1758,6 +2917,30 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 12,
     color: Colors.error,
+    fontWeight: '600',
+  },
+  errorText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: Colors.error,
+    fontWeight: '600',
+  },
+  passwordActionsRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+  },
+  passwordButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.primary,
+  },
+  passwordButtonText: {
+    color: 'white',
+    fontSize: 11,
     fontWeight: '600',
   },
   buttonDisabled: {
@@ -1943,6 +3126,34 @@ const styles = StyleSheet.create({
   previewModalContent: {
     padding: 20,
   },
+  previewActionBanner: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 10,
+    marginBottom: 8,
+  },
+  previewActionBannerText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  previewActionLink: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  previewActionLinkText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   previewGrid: {
     gap: 20,
   },
@@ -2111,6 +3322,22 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: 'center',
   },
+  previewActionList: {
+    gap: 8,
+  },
+  previewActionItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  previewActionItemText: {
+    fontSize: 11,
+    color: Colors.text,
+    fontWeight: '600',
+  },
   previewList: {
     gap: 8,
   },
@@ -2210,6 +3437,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 8,
     alignItems: 'center',
+  },
+  previewButtonRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
   previewHomeActionText: {
     color: 'white',

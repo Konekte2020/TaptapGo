@@ -135,8 +135,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   card: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     ...Shadows.small,
     gap: 12,
@@ -156,9 +156,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    borderRadius: 12,
-    paddingVertical: 10,
+    borderRadius: 14,
+    paddingVertical: 12,
     backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   typeButtonActive: {
     backgroundColor: Colors.primary,
@@ -173,7 +174,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     fontSize: 14,
     color: Colors.text,
@@ -181,9 +182,10 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: Colors.primary,
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     marginTop: 4,
+    ...Shadows.small,
   },
   saveButtonDisabled: {
     opacity: 0.6,

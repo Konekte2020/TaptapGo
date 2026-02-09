@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,34 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
+import { notificationsAPI } from '../../src/services/api';
 
 export default function DriverProfile() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const [notificationCount, setNotificationCount] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchNotifications = async () => {
+      try {
+        const response = await notificationsAPI.getAll();
+        const items = response.data.notifications || [];
+        const unreadCount = items.filter((n: any) => !n.is_read).length;
+        if (isMounted) {
+          setNotificationCount(unreadCount);
+        }
+      } catch (error) {
+        console.error('Notifications error:', error);
+      }
+    };
+    fetchNotifications();
+    const timer = setInterval(fetchNotifications, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const handleLogout = () => {
     Alert.alert(
@@ -87,9 +111,20 @@ export default function DriverProfile() {
               <Text style={styles.plateNumber}>{user?.plate_number}</Text>
             </View>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: Colors.approved }]}>
-            <Ionicons name="checkmark-circle" size={14} color="white" />
-            <Text style={styles.statusText}>Apwouve</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: user?.status === 'approved' ? Colors.approved : Colors.warning },
+            ]}
+          >
+            <Ionicons
+              name={user?.status === 'approved' ? 'checkmark-circle' : 'time'}
+              size={14}
+              color="white"
+            />
+            <Text style={styles.statusText}>
+              {user?.status === 'approved' ? 'Apwouve' : 'An atant apwobasyon'}
+            </Text>
           </View>
         </View>
 
@@ -123,7 +158,16 @@ export default function DriverProfile() {
                 <Ionicons name={item.icon as any} size={22} color={Colors.text} />
                 <Text style={styles.menuLabel}>{item.label}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
+              <View style={styles.menuRight}>
+                {item.label === 'Notifikasyon' && notificationCount > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>
+                      {notificationCount > 99 ? '99+' : notificationCount}
+                    </Text>
+                  </View>
+                )}
+                <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -157,8 +201,8 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   profileCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     padding: 24,
     alignItems: 'center',
     marginBottom: 16,
@@ -172,6 +216,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
+    ...Shadows.small,
   },
   avatarPlaceholder: {
     width: 80,
@@ -180,6 +225,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secondary,
     justifyContent: 'center',
     alignItems: 'center',
+    ...Shadows.small,
   },
   avatarText: {
     fontSize: 32,
@@ -223,12 +269,13 @@ const styles = StyleSheet.create({
   },
   vehicleCard: {
     backgroundColor: Colors.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+    ...Shadows.small,
   },
   vehicleHeader: {
     flexDirection: 'row',
@@ -261,8 +308,8 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 20,
     marginBottom: 20,
     ...Shadows.small,
@@ -286,8 +333,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.border,
   },
   menuContainer: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     ...Shadows.small,
   },
   menuItem: {
@@ -303,6 +350,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  menuRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  notificationBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  notificationBadgeText: {
+    fontSize: 11,
+    color: 'white',
+    fontWeight: '700',
   },
   menuLabel: {
     fontSize: 16,

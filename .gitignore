@@ -31,9 +31,14 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
-
+.env
+.env.*
+!.env.example
 *token.json*
 *credentials.json*
+
+# Backend build outputs (APK/AAB)
+backend/builds/
 
 # Logs and debug files
 npm-debug.log*

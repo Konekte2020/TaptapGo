@@ -8,6 +8,7 @@ import {
   Image,
   ScrollView,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,12 +39,30 @@ export default function PassengerProfile() {
     );
   };
 
-  const handlePickPhoto = async () => {
+  const openImagePicker = async (source: 'camera' | 'library') => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè kamera.');
+          return;
+        }
+      } else if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè galri a.');
+          return;
+        }
+      }
+
+      const picker =
+        source === 'camera'
+          ? ImagePicker.launchCameraAsync
+          : ImagePicker.launchImageLibraryAsync;
+
+      const result = await picker({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
+        allowsEditing: false,
         quality: 0.6,
         base64: true,
       });
@@ -66,6 +85,18 @@ export default function PassengerProfile() {
     } finally {
       setSavingPhoto(false);
     }
+  };
+
+  const handlePickPhoto = () => {
+    Alert.alert(
+      'Ajoute foto',
+      'Chwazi sous foto a',
+      [
+        { text: 'Galri', onPress: () => openImagePicker('library') },
+        { text: 'Kamera', onPress: () => openImagePicker('camera') },
+        { text: 'Anile', style: 'cancel' },
+      ]
+    );
   };
 
   const menuItems = [
@@ -164,8 +195,8 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   profileCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     padding: 24,
     alignItems: 'center',
     marginBottom: 16,
@@ -227,6 +258,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 4,
+    ...Shadows.small,
   },
   cityText: {
     fontSize: 13,
@@ -234,9 +266,10 @@ const styles = StyleSheet.create({
   },
   walletCard: {
     backgroundColor: Colors.secondary,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 20,
     marginBottom: 20,
+    ...Shadows.medium,
   },
   walletInfo: {
     flexDirection: 'row',
@@ -254,8 +287,8 @@ const styles = StyleSheet.create({
     color: 'white',
   },
   menuContainer: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     ...Shadows.small,
   },
   menuItem: {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
-import { driverAPI } from '../../src/services/api';
+import { HAITI_DEPARTMENTS, DEPARTMENT_CITIES } from '../../src/constants/haiti';
+import { driverAPI, rideAPI } from '../../src/services/api';
 
 export default function AdminDrivers() {
   const [drivers, setDrivers] = useState<any[]>([]);
@@ -33,6 +34,23 @@ export default function AdminDrivers() {
   const [creating, setCreating] = useState(false);
   const [zoomVisible, setZoomVisible] = useState(false);
   const [zoomImage, setZoomImage] = useState('');
+  const [reminding, setReminding] = useState(false);
+  const [remindModalVisible, setRemindModalVisible] = useState(false);
+  const [remindMessage, setRemindMessage] = useState('');
+  const [remindTarget, setRemindTarget] = useState<string | null>(null);
+  const [testModalVisible, setTestModalVisible] = useState(false);
+  const [testSaving, setTestSaving] = useState(false);
+  const [testLoading, setTestLoading] = useState(false);
+  const [testRides, setTestRides] = useState<any[]>([]);
+  const [testForm, setTestForm] = useState({
+    vehicle_type: 'moto',
+    department: '',
+    city: '',
+    pickup_address: '',
+    destination_address: '',
+  });
+  const [departmentSearch, setDepartmentSearch] = useState('');
+  const [citySearch, setCitySearch] = useState('');
   const [driverForm, setDriverForm] = useState({
     full_name: '',
     email: '',
@@ -180,6 +198,138 @@ export default function AdminDrivers() {
     }
   };
 
+  const openRemindModal = (driverId?: string) => {
+    setRemindTarget(driverId || null);
+    setRemindMessage('');
+    setRemindModalVisible(true);
+  };
+
+  const handleSendRemind = async () => {
+    setReminding(true);
+    try {
+      const response = await driverAPI.remindMissingDocs({
+        status: remindTarget ? undefined : 'pending',
+        driver_id: remindTarget || undefined,
+        message: remindMessage.trim() || undefined,
+      });
+      const count = response.data?.notified ?? 0;
+      Alert.alert('Siksè', remindTarget ? 'Notifikasyon voye.' : `${count} chofè resevwa notifikasyon.`);
+      setRemindModalVisible(false);
+      fetchDrivers();
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab voye notifikasyon');
+    } finally {
+      setReminding(false);
+    }
+  };
+
+  const geocodeAddress = async (value: string) => {
+    const token = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
+    if (!token) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${token}&country=ht&limit=1&types=address,place,locality,neighborhood`;
+    const response = await fetch(url);
+    const data = await response.json();
+    const first = data?.features?.[0];
+    if (!first?.center?.length) return null;
+    return { lat: first.center[1], lng: first.center[0] };
+  };
+
+  const isValidDepartment = (value: string) => HAITI_DEPARTMENTS.includes(value);
+  const isValidCity = (dept: string, city: string) =>
+    Boolean(DEPARTMENT_CITIES[dept]?.includes(city));
+
+  const handleCreateTestRide = async () => {
+    if (!testForm.department.trim() || !testForm.city.trim() || !testForm.pickup_address.trim() || !testForm.destination_address.trim()) {
+      Alert.alert('Erè', 'Tanpri ranpli depatman, vil, pickup, ak destinasyon.');
+      return;
+    }
+    if (!isValidDepartment(testForm.department) || !isValidCity(testForm.department, testForm.city)) {
+      Alert.alert('Erè', 'Tanpri chwazi depatman ak vil nan lis la.');
+      return;
+    }
+    setTestSaving(true);
+    try {
+      const pickup = await geocodeAddress(testForm.pickup_address);
+      const destination = await geocodeAddress(testForm.destination_address);
+      const useFallback = !pickup || !destination;
+      const payload: any = {
+        vehicle_type: testForm.vehicle_type as 'moto' | 'car',
+        city: testForm.city.trim(),
+        pickup_address: testForm.pickup_address.trim(),
+        destination_address: testForm.destination_address.trim(),
+      };
+      if (!useFallback) {
+        payload.pickup_lat = pickup.lat;
+        payload.pickup_lng = pickup.lng;
+        payload.destination_lat = destination.lat;
+        payload.destination_lng = destination.lng;
+      }
+      const response = await driverAPI.createTestRideAdmin(payload);
+      const count = response.data?.created ?? 0;
+      Alert.alert(
+        'Siksè',
+        useFallback
+          ? `${count} kous tès kreye pou flot ou a. Adrès yo pa jwenn; nou itilize kowòdone otomatik.`
+          : `${count} kous tès kreye pou flot ou a.`
+      );
+      fetchActiveTestRides(payload.vehicle_type);
+      setTestModalVisible(false);
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab kreye kous tès');
+    } finally {
+      setTestSaving(false);
+    }
+  };
+
+  const fetchActiveTestRides = async (vehicleType?: 'moto' | 'car') => {
+    setTestLoading(true);
+    try {
+      const response = await driverAPI.getActiveTestRides({ vehicle_type: vehicleType });
+      setTestRides(response.data.rides || []);
+    } catch (error) {
+      setTestRides([]);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleCancelTestRide = async (rideId: string) => {
+    try {
+      await rideAPI.updateStatus(rideId, 'cancelled', 'test ride cancelled');
+      await fetchActiveTestRides(testForm.vehicle_type as 'moto' | 'car');
+    } catch (error: any) {
+      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab anile kous tès');
+    }
+  };
+
+  useEffect(() => {
+    if (!testModalVisible) return;
+    fetchActiveTestRides(testForm.vehicle_type as 'moto' | 'car');
+  }, [testModalVisible, testForm.vehicle_type]);
+
+  const filteredDepartments = useMemo(() => {
+    if (!departmentSearch.trim()) return HAITI_DEPARTMENTS;
+    const term = departmentSearch.toLowerCase();
+    return HAITI_DEPARTMENTS.filter((d) => d.toLowerCase().includes(term));
+  }, [departmentSearch]);
+
+  const cityOptions = useMemo(() => {
+    const cities = DEPARTMENT_CITIES[testForm.department] || [];
+    if (!citySearch.trim()) return cities;
+    const term = citySearch.toLowerCase();
+    return cities.filter((c) => c.toLowerCase().includes(term));
+  }, [testForm.department, citySearch]);
+
+  const handleRemindDrivers = () => {
+    openRemindModal();
+  };
+
+  const handleRemindDriver = (driverId: string) => {
+    openRemindModal(driverId);
+  };
+
   const handleApprove = async () => {
     if (!selectedDriver) return;
     setSubmitting(true);
@@ -308,6 +458,14 @@ export default function AdminDrivers() {
             <Ionicons name="document-text" size={18} color="white" />
             <Text style={[styles.actionText, { color: 'white' }]}>Verifye dokiman</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.remindInlineButton]}
+            onPress={() => handleRemindDriver(item.id)}
+            disabled={reminding}
+          >
+            <Ionicons name="notifications" size={18} color="white" />
+            <Text style={[styles.actionText, { color: 'white' }]}>Raple</Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -323,9 +481,21 @@ export default function AdminDrivers() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Flot Chofè</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => setAddModalVisible(true)}>
-          <Ionicons name="add" size={22} color="white" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.remindButton, reminding && styles.remindButtonDisabled]}
+            onPress={handleRemindDrivers}
+            disabled={reminding}
+          >
+            <Ionicons name="notifications" size={20} color="white" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.testButtonHeader} onPress={() => setTestModalVisible(true)}>
+            <Ionicons name="flash" size={20} color="white" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.addButton} onPress={() => setAddModalVisible(true)}>
+            <Ionicons name="add" size={22} color="white" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.filterContainer}>
@@ -445,6 +615,13 @@ export default function AdminDrivers() {
                 disabled={submitting}
               >
                 <Text style={styles.modalButtonText}>Rejte</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalRemind]}
+                onPress={() => selectedDriver?.id && handleRemindDriver(selectedDriver.id)}
+                disabled={submitting || reminding}
+              >
+                <Text style={styles.modalButtonText}>Raple</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalApprove]}
@@ -668,6 +845,193 @@ export default function AdminDrivers() {
           <Image source={{ uri: zoomImage }} style={styles.zoomImage} resizeMode="contain" />
         </View>
       </Modal>
+
+      <Modal
+        visible={testModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setTestModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setTestModalVisible(false)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Kreye kous tès</Text>
+            <TouchableOpacity onPress={handleCreateTestRide} disabled={testSaving}>
+              <Text style={styles.saveButton}>{testSaving ? 'Ap kreye...' : 'Kreye'}</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <Text style={styles.formLabel}>Kalite veyikil</Text>
+            <View style={styles.quickRow}>
+              {(['moto', 'car'] as const).map((type) => (
+                <TouchableOpacity
+                  key={type}
+                  style={[
+                    styles.quickChip,
+                    testForm.vehicle_type === type && styles.quickChipActive,
+                  ]}
+                  onPress={() => setTestForm({ ...testForm, vehicle_type: type })}
+                >
+                  <Text
+                    style={[
+                      styles.quickText,
+                      testForm.vehicle_type === type && styles.quickTextActive,
+                    ]}
+                  >
+                    {type === 'moto' ? 'Moto' : 'Machin'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.formLabel}>Depatman</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Chèche depatman"
+              value={departmentSearch}
+              onChangeText={(text) => {
+                setDepartmentSearch(text);
+                if (testForm.department && text.trim() !== testForm.department) {
+                  setTestForm({ ...testForm, department: '', city: '' });
+                  setCitySearch('');
+                }
+              }}
+            />
+            {filteredDepartments.length > 0 && (
+              <View style={styles.suggestions}>
+                {filteredDepartments.map((dept) => (
+                  <TouchableOpacity
+                    key={dept}
+                    style={styles.suggestionItem}
+                    onPress={() => {
+                      setTestForm({ ...testForm, department: dept, city: '' });
+                      setDepartmentSearch(dept);
+                      setCitySearch('');
+                    }}
+                  >
+                    <Text style={styles.suggestionText}>{dept}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Text style={styles.formLabel}>Vil</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Chèche vil"
+              value={citySearch}
+              onChangeText={(text) => {
+                setCitySearch(text);
+                if (testForm.city && text.trim() !== testForm.city) {
+                  setTestForm({ ...testForm, city: '' });
+                }
+              }}
+            />
+            {cityOptions.length > 0 && (
+              <View style={styles.suggestions}>
+                {cityOptions.map((city) => (
+                  <TouchableOpacity
+                    key={city}
+                    style={styles.suggestionItem}
+                    onPress={() => {
+                      setTestForm({ ...testForm, city });
+                      setCitySearch(city);
+                    }}
+                  >
+                    <Text style={styles.suggestionText}>{city}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <Text style={styles.formLabel}>Pickup</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Adrès pickup"
+              value={testForm.pickup_address}
+              onChangeText={(text) => setTestForm({ ...testForm, pickup_address: text })}
+            />
+            <Text style={styles.formLabel}>Destinasyon</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Adrès destinasyon"
+              value={testForm.destination_address}
+              onChangeText={(text) => setTestForm({ ...testForm, destination_address: text })}
+            />
+
+            <Text style={styles.formLabel}>Kous tès aktif</Text>
+            {testLoading ? (
+              <Text style={styles.emptyNote}>Ap chaje...</Text>
+            ) : testRides.length === 0 ? (
+              <Text style={styles.emptyNote}>Pa gen kous tès aktif.</Text>
+            ) : (
+              testRides.map((ride) => (
+                <View key={ride.id} style={styles.testRideCard}>
+                  <View style={styles.testRideInfo}>
+                    <Text style={styles.testRideTitle}>
+                      {ride.vehicle_type === 'moto' ? 'Moto' : 'Machin'} • {ride.city || '—'}
+                    </Text>
+                    <Text style={styles.testRideMeta}>
+                      {ride.pickup_address} → {ride.destination_address}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.testCancelButton}
+                    onPress={() => handleCancelTestRide(ride.id)}
+                  >
+                    <Text style={styles.testCancelText}>Anile</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={remindModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setRemindModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setRemindModalVisible(false)}>
+              <Ionicons name="close" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Raple Chofè</Text>
+            <TouchableOpacity onPress={handleSendRemind} disabled={reminding}>
+              <Text style={styles.saveButton}>{reminding ? 'Ap voye...' : 'Voye'}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.modalContent}>
+            <Text style={styles.formLabel}>Mesaj rapid</Text>
+            <View style={styles.quickRow}>
+              <TouchableOpacity
+                style={styles.quickChip}
+                onPress={() => setRemindMessage('Tanpri fini enskripsyon ou epi telechaje dokiman ki manke yo.')}
+              >
+                <Text style={styles.quickText}>Dokiman manke</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.quickChip}
+                onPress={() => setRemindMessage('Tanpri mete foto lisans, papye veyikil, ak foto veyikil.')}
+              >
+                <Text style={styles.quickText}>Foto obligatwa</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.formLabel}>Ekri mesaj</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Ekri mesaj pou chofè a..."
+              value={remindMessage}
+              onChangeText={setRemindMessage}
+              multiline
+            />
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -683,6 +1047,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   title: {
     fontSize: 24,
@@ -702,6 +1071,25 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  remindButton: {
+    backgroundColor: Colors.secondary,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  testButtonHeader: {
+    backgroundColor: Colors.primary,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  remindButtonDisabled: {
+    opacity: 0.7,
   },
   filterButton: {
     paddingHorizontal: 16,
@@ -834,6 +1222,9 @@ const styles = StyleSheet.create({
   verifyButton: {
     backgroundColor: Colors.primary,
   },
+  remindInlineButton: {
+    backgroundColor: Colors.secondary,
+  },
   actionText: {
     fontSize: 14,
     fontWeight: '600',
@@ -925,6 +1316,9 @@ const styles = StyleSheet.create({
   },
   modalApprove: {
     backgroundColor: Colors.success,
+  },
+  modalRemind: {
+    backgroundColor: Colors.secondary,
   },
   modalButtonText: {
     color: 'white',
@@ -1043,6 +1437,79 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.error,
     fontWeight: '600',
+  },
+  quickRow: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  quickChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+  },
+  quickChipActive: {
+    backgroundColor: Colors.primary,
+  },
+  quickText: {
+    fontSize: 12,
+    color: Colors.text,
+    fontWeight: '600',
+  },
+  quickTextActive: {
+    color: 'white',
+  },
+  testRideCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...Shadows.small,
+  },
+  testRideInfo: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  testRideTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  testRideMeta: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  testCancelButton: {
+    backgroundColor: Colors.error,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  testCancelText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  suggestions: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  suggestionItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  suggestionText: {
+    color: Colors.text,
+    fontSize: 13,
   },
   zoomOverlay: {
     flex: 1,

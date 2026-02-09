@@ -95,6 +95,10 @@ export default function Login() {
     }
   };
 
+  const handleForgotPassword = () => {
+    router.push(`/auth/forgot-password?type=${userType}`);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView 
@@ -144,6 +148,10 @@ export default function Login() {
                 />
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity style={styles.forgotButton} onPress={handleForgotPassword}>
+              <Text style={styles.forgotText}>Modpas bliye?</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.loginButton, loading && styles.disabledButton]}
@@ -225,6 +233,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 8,
+  },
+  forgotButton: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
+  },
+  forgotText: {
+    color: Colors.primary,
+    fontSize: 14,
+    fontWeight: '600',
   },
   disabledButton: {
     opacity: 0.7,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -29,6 +29,12 @@ export default function SuperAdminAdmins() {
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [adminType, setAdminType] = useState<'direct' | 'brand'>('direct');
+  const [filterType, setFilterType] = useState<'all' | 'direct' | 'brand'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [form, setForm] = useState({
     full_name: '',
     email: '',
@@ -64,12 +70,35 @@ export default function SuperAdminAdmins() {
     }
   };
 
-  const isBrandAdmin = !!editingAdmin?.brand_name;
+  const isBrandAdmin = adminType === 'brand' || !!editingAdmin?.brand_name;
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredAdmins = admins.filter((item) => {
+    const isBrand = !!item.brand_name;
+    if (filterType === 'brand' && !isBrand) return false;
+    if (filterType === 'direct' && isBrand) return false;
+    if (!normalizedSearch) return true;
+    const haystack = [
+      item.full_name,
+      item.email,
+      item.phone,
+      item.brand_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(normalizedSearch);
+  });
 
   const handleSaveAdmin = async () => {
     setFormError('');
     if (!form.full_name || !form.email || !form.phone || (!editingAdmin && !form.password)) {
       const message = 'Tanpri ranpli tout chan obligatwa yo';
+      setFormError(message);
+      Alert.alert('Erè', message);
+      return;
+    }
+    if ((adminType === 'brand' || !!editingAdmin?.brand_name) && !form.brand_name.trim()) {
+      const message = 'Tanpri mete non mak la';
       setFormError(message);
       Alert.alert('Erè', message);
       return;
@@ -102,7 +131,7 @@ export default function SuperAdminAdmins() {
           password: form.password,
           force_password_change: form.force_password_change,
         };
-        if (form.brand_name || selectedCities.length > 0) {
+        if (adminType === 'brand' || form.brand_name || selectedCities.length > 0) {
           createPayload.brand_name = form.brand_name;
           createPayload.primary_color = form.primary_color;
           createPayload.secondary_color = form.secondary_color;
@@ -148,6 +177,7 @@ export default function SuperAdminAdmins() {
 
   const handleEditAdmin = (admin: any) => {
     setEditingAdmin(admin);
+    setAdminType(admin.brand_name ? 'brand' : 'direct');
     setForm({
       full_name: admin.full_name || '',
       email: admin.email || '',
@@ -164,25 +194,29 @@ export default function SuperAdminAdmins() {
   };
 
   const handleDeleteAdmin = (admin: any) => {
-    Alert.alert(
-      'Siprime Admin',
-      'Aksyon sa a pa ka retounen. Ou sèten?',
-      [
-        { text: 'Non', style: 'cancel' },
-        {
-          text: 'Wi, siprime',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await adminAPI.deleteAdmin(admin.id);
-              fetchAdmins();
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab siprime');
-            }
-          },
-        },
-      ]
-    );
+    setDeleteError('');
+    setDeleteTarget(admin);
+  };
+
+  const closeDeleteModal = () => {
+    if (deleteLoading) return;
+    setDeleteTarget(null);
+    setDeleteError('');
+  };
+
+  const confirmDeleteAdmin = async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
+    setDeleteError('');
+    try {
+      await adminAPI.deleteAdmin(deleteTarget.id);
+      await fetchAdmins();
+      setDeleteTarget(null);
+    } catch (error: any) {
+      setDeleteError(error.response?.data?.detail || 'Pa kapab siprime');
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -200,6 +234,7 @@ export default function SuperAdminAdmins() {
     setSelectedCities([]);
     setEditingAdmin(null);
     setFormError('');
+    setAdminType('direct');
   };
 
   const toggleCity = (city: string) => {
@@ -208,6 +243,26 @@ export default function SuperAdminAdmins() {
     } else {
       setSelectedCities([...selectedCities, city]);
     }
+  };
+
+  const groupedAdmins = useMemo(() => {
+    const groups: Record<string, any[]> = { taptapgo: [] };
+    filteredAdmins.forEach((a) => {
+      if (!a.brand_name) {
+        groups.taptapgo.push(a);
+        return;
+      }
+      const key = a.id || a.brand_name;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
+    });
+    return groups;
+  }, [filteredAdmins]);
+
+  const adminGroupLabel = (adminId: string) => {
+    const admin = filteredAdmins.find((a) => a.id === adminId);
+    if (!admin) return 'Mak Pèsonèl';
+    return admin.brand_name || admin.full_name || 'Mak Pèsonèl';
   };
 
   const renderAdmin = ({ item }: { item: any }) => (
@@ -300,21 +355,75 @@ export default function SuperAdminAdmins() {
         </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={admins}
-        keyExtractor={(item) => item.id}
-        renderItem={renderAdmin}
+      <View style={styles.filters}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Rechèch admin..."
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+        />
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={[styles.filterChip, filterType === 'all' && styles.filterChipActive]}
+            onPress={() => setFilterType('all')}
+          >
+            <Text style={[styles.filterChipText, filterType === 'all' && styles.filterChipTextActive]}>
+              Tout
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, filterType === 'direct' && styles.filterChipActive]}
+            onPress={() => setFilterType('direct')}
+          >
+            <Text style={[styles.filterChipText, filterType === 'direct' && styles.filterChipTextActive]}>
+              TapTapGo
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, filterType === 'brand' && styles.filterChipActive]}
+            onPress={() => setFilterType('brand')}
+          >
+            <Text style={[styles.filterChipText, filterType === 'brand' && styles.filterChipTextActive]}>
+              Mak Pèsonèl
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={fetchAdmins} />
         }
-        ListEmptyComponent={
+      >
+        <Text style={styles.sectionTitle}>Admin TapTapGo</Text>
+        {(groupedAdmins.taptapgo || []).length === 0 ? (
+          <Text style={styles.emptyNote}>Pa gen admin TapTapGo</Text>
+        ) : (
+          (groupedAdmins.taptapgo || []).map((a) => (
+            <View key={a.id}>{renderAdmin({ item: a })}</View>
+          ))
+        )}
+
+        <Text style={styles.sectionTitle}>Admin Mak Pèsonèl</Text>
+        {Object.keys(groupedAdmins)
+          .filter((key) => key !== 'taptapgo')
+          .map((adminId) => (
+            <View key={adminId} style={styles.groupSection}>
+              <Text style={styles.groupTitle}>{adminGroupLabel(adminId)}</Text>
+              {(groupedAdmins[adminId] || []).map((a) => (
+                <View key={a.id}>{renderAdmin({ item: a })}</View>
+              ))}
+            </View>
+          ))}
+
+        {filteredAdmins.length === 0 && (
           <View style={styles.emptyContainer}>
             <Ionicons name="people-outline" size={60} color={Colors.textSecondary} />
             <Text style={styles.emptyText}>Pa gen admin</Text>
           </View>
-        }
-      />
+        )}
+      </ScrollView>
 
       {/* Create Admin Modal */}
       <Modal
@@ -345,6 +454,30 @@ export default function SuperAdminAdmins() {
           )}
 
           <ScrollView style={styles.modalContent}>
+            {!editingAdmin && (
+              <>
+                <Text style={styles.formLabel}>Kalite Admin</Text>
+                <View style={styles.typeSelector}>
+                  <TouchableOpacity
+                    style={[styles.typeButton, adminType === 'direct' && styles.typeButtonActive]}
+                    onPress={() => setAdminType('direct')}
+                  >
+                    <Text style={[styles.typeButtonText, adminType === 'direct' && styles.typeButtonTextActive]}>
+                      TapTapGo
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.typeButton, adminType === 'brand' && styles.typeButtonActive]}
+                    onPress={() => setAdminType('brand')}
+                  >
+                    <Text style={[styles.typeButtonText, adminType === 'brand' && styles.typeButtonTextActive]}>
+                      Mak Pèsonèl
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
             <Text style={styles.formLabel}>Enfòmasyon</Text>
             <TextInput
               style={styles.input}
@@ -430,6 +563,41 @@ export default function SuperAdminAdmins() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      <Modal
+        visible={!!deleteTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={closeDeleteModal}
+      >
+        <View style={styles.deleteOverlay}>
+          <View style={styles.deleteModal}>
+            <Text style={styles.deleteTitle}>Siprime Admin</Text>
+            <Text style={styles.deleteText}>
+              Aksyon sa a pa ka retounen. Ou sèten ou vle siprime admin sa a?
+            </Text>
+            {!!deleteError && <Text style={styles.deleteError}>{deleteError}</Text>}
+            <View style={styles.deleteActions}>
+              <TouchableOpacity
+                style={[styles.deleteButton, styles.deleteCancel]}
+                onPress={closeDeleteModal}
+                disabled={deleteLoading}
+              >
+                <Text style={styles.deleteCancelText}>Anile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.deleteButton, styles.deleteConfirm]}
+                onPress={confirmDeleteAdmin}
+                disabled={deleteLoading}
+              >
+                <Text style={styles.deleteConfirmText}>
+                  {deleteLoading ? 'Ap siprime...' : 'Siprime'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -461,6 +629,63 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 20,
     paddingTop: 0,
+    gap: 12,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  groupSection: {
+    marginTop: 12,
+  },
+  groupTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+    marginBottom: 8,
+  },
+  emptyNote: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginBottom: 12,
+  },
+  filters: {
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  searchInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 44,
+    fontSize: 14,
+    color: Colors.text,
+    ...Shadows.small,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    ...Shadows.small,
+  },
+  filterChipActive: {
+    backgroundColor: Colors.primary,
+  },
+  filterChipText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: 'white',
   },
   adminCard: {
     backgroundColor: Colors.background,
@@ -599,6 +824,65 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 12,
   },
+  deleteOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  deleteModal: {
+    width: '100%',
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 20,
+    ...Shadows.medium,
+  },
+  deleteTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  deleteText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  deleteError: {
+    fontSize: 12,
+    color: Colors.error,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  deleteButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  deleteCancel: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  deleteConfirm: {
+    backgroundColor: Colors.error,
+  },
+  deleteCancelText: {
+    color: Colors.text,
+    fontWeight: '700',
+  },
+  deleteConfirmText: {
+    color: 'white',
+    fontWeight: '700',
+  },
   modalContainer: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -656,6 +940,29 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginTop: 16,
     marginBottom: 8,
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    ...Shadows.small,
+  },
+  typeButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  typeButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  typeButtonTextActive: {
+    color: 'white',
   },
   input: {
     backgroundColor: Colors.surface,

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -6,7 +7,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import uuid
 from datetime import datetime, timedelta
 import random
@@ -15,6 +16,8 @@ import bcrypt
 import base64
 from supabase import create_client, Client
 import json
+import math
+from services.build_service import BuildService
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -27,6 +30,9 @@ JWT_ALGORITHM = 'HS256'
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Initialize Build Service
+build_service = BuildService(supabase)
 
 # Create the main app
 app = FastAPI(title="TapTapGo API", version="1.0.0")
@@ -58,10 +64,15 @@ def create_notification(user_id: str, user_type: str, title: str, body: str):
 
 
 def calculate_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """Rough distance in km for nearby matching"""
-    dlat = lat2 - lat1
-    dlng = lng2 - lng1
-    return ((dlat ** 2 + dlng ** 2) ** 0.5) * 111
+    """Haversine distance in km for nearby matching"""
+    r = 6371
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def estimate_eta_minutes(distance_km: float) -> int:
@@ -71,6 +82,17 @@ def estimate_eta_minutes(distance_km: float) -> int:
 
 def generate_contact_code() -> str:
     return ''.join(str(random.randint(0, 9)) for _ in range(6))
+
+
+def resolve_admin_id(admin_id: Optional[str]) -> Optional[str]:
+    if not admin_id:
+        return None
+    result = supabase.table("admins").select("id,is_active").eq("id", admin_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=400, detail="Admin pa jwenn")
+    if not result.data[0].get("is_active", True):
+        raise HTTPException(status_code=400, detail="Admin inaktif")
+    return admin_id
 
 # ============== PYDANTIC MODELS ==============
 
@@ -99,6 +121,7 @@ class UserRegisterDriver(BaseModel):
     vehicle_papers: Optional[str] = None  # base64
     profile_photo: Optional[str] = None  # base64
     password: str
+    admin_id: Optional[str] = None
 
 class AdminDriverCreate(BaseModel):
     full_name: str
@@ -127,6 +150,18 @@ class OTPRequest(BaseModel):
 class OTPVerify(BaseModel):
     phone: str
     code: str
+
+class PasswordResetRequest(BaseModel):
+    identifier: str  # phone or email
+    channel: str  # 'phone' or 'email'
+    user_type: str  # 'passenger', 'driver', 'admin', 'subadmin', 'superadmin'
+
+class PasswordResetConfirm(BaseModel):
+    identifier: str
+    channel: str
+    user_type: str
+    code: str
+    new_password: str
 
 class PasswordChange(BaseModel):
     current_password: str
@@ -184,6 +219,21 @@ class AdminPaymentMethodsUpdate(BaseModel):
     bank_account_name: Optional[str] = None
     bank_account_number: Optional[str] = None
     default_method: Optional[str] = None
+
+class DriverReminderRequest(BaseModel):
+    driver_id: Optional[str] = None
+    status: Optional[str] = None
+    message: Optional[str] = None
+
+class BuildRequest(BaseModel):
+    brand_id: str
+    company_name: str
+    logo: str  # base64
+    primary_color: str
+    secondary_color: str
+    tertiary_color: str
+    local_only: Optional[bool] = False
+    build_mode: Optional[str] = "local"  # local | cloud
 
 class ComplaintCreate(BaseModel):
     target_user_type: str  # 'driver' or 'passenger'
@@ -251,6 +301,18 @@ class RideStatusUpdate(BaseModel):
 class RideRating(BaseModel):
     rating: int  # 1-5
     comment: Optional[str] = None
+
+class TestRideRequest(BaseModel):
+    driver_id: Optional[str] = None
+    admin_id: Optional[str] = None
+    vehicle_type: Optional[str] = None  # 'moto' or 'car'
+    city: Optional[str] = None
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    pickup_address: Optional[str] = None
+    destination_lat: Optional[float] = None
+    destination_lng: Optional[float] = None
+    destination_address: Optional[str] = None
 
 # Location Update
 class LocationUpdate(BaseModel):
@@ -341,6 +403,14 @@ def calculate_ride_price(city_data: dict, distance_km: float, duration_min: floa
         'subtotal': subtotal,
         'total': round(total, 2)
     }
+
+def generate_test_coords(base_lat: float, base_lng: float, min_km: float = 1.0, max_km: float = 4.0) -> Tuple[float, float]:
+    """Generate random coordinates within a radius in km"""
+    distance_km = random.uniform(min_km, max_km)
+    bearing = random.uniform(0, 2 * math.pi)
+    dlat = (distance_km / 111) * math.cos(bearing)
+    dlng = (distance_km / (111 * math.cos(math.radians(base_lat)))) * math.sin(bearing)
+    return base_lat + dlat, base_lng + dlng
 
 # ============== INITIALIZE DATABASE ==============
 
@@ -674,10 +744,118 @@ async def verify_otp(request: OTPVerify):
     
     raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
+@api_router.post("/auth/password-reset/request")
+async def request_password_reset(data: PasswordResetRequest):
+    """Request password reset by phone"""
+    try:
+        if data.channel not in {"phone", "email"}:
+            raise HTTPException(status_code=400, detail="Invalid channel")
+
+        table_map = {
+            'passenger': 'passengers',
+            'driver': 'drivers',
+            'admin': 'admins',
+            'subadmin': 'subadmins',
+            'superadmin': 'superadmins'
+        }
+        table = table_map.get(data.user_type)
+        if not table:
+            raise HTTPException(status_code=400, detail="Invalid user type")
+
+        lookup_field = "phone" if data.channel == "phone" else "email"
+        result = supabase.table(table).select("id,phone,email").eq(lookup_field, data.identifier).execute()
+        resolved_type = data.user_type
+
+        if not result.data and data.user_type == 'admin':
+            table = table_map.get('subadmin')
+            result = supabase.table(table).select("id,phone,email").eq(lookup_field, data.identifier).execute()
+            if result.data:
+                resolved_type = 'subadmin'
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        otp_code = generate_otp()
+        expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+        otp_data = {
+            "id": str(uuid.uuid4()),
+            "phone": data.identifier,
+            "code": otp_code,
+            "expires_at": expires_at.isoformat(),
+            "is_used": False
+        }
+
+        try:
+            supabase.table("otp_codes").insert(otp_data).execute()
+        except Exception as e:
+            logger.warning(f"Could not save OTP to database: {e}")
+
+        logger.info(f"OTP for {data.identifier}: {otp_code}")
+
+        return {
+            "success": True,
+            "message": "OTP sent successfully",
+            "user_type": resolved_type,
+            "channel": data.channel,
+            "otp": otp_code  # Only in development!
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset request error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/auth/password-reset/confirm")
+async def confirm_password_reset(data: PasswordResetConfirm):
+    """Confirm password reset with OTP"""
+    try:
+        if data.channel not in {"phone", "email"}:
+            raise HTTPException(status_code=400, detail="Invalid channel")
+
+        table_map = {
+            'passenger': 'passengers',
+            'driver': 'drivers',
+            'admin': 'admins',
+            'subadmin': 'subadmins',
+            'superadmin': 'superadmins'
+        }
+        table = table_map.get(data.user_type)
+        if not table:
+            raise HTTPException(status_code=400, detail="Invalid user type")
+
+        lookup_field = "phone" if data.channel == "phone" else "email"
+        result = supabase.table(table).select("id,phone,email").eq(lookup_field, data.identifier).execute()
+        resolved_type = data.user_type
+
+        if not result.data and data.user_type == 'admin':
+            table = table_map.get('subadmin')
+            result = supabase.table(table).select("id,phone,email").eq(lookup_field, data.identifier).execute()
+            if result.data:
+                resolved_type = 'subadmin'
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        await verify_otp(OTPVerify(phone=data.identifier, code=data.code))
+
+        supabase.table(table).update({
+            "password_hash": hash_password(data.new_password),
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", result.data[0]["id"]).execute()
+
+        return {"success": True, "message": "Password updated", "user_type": resolved_type, "channel": data.channel}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset confirm error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.post("/auth/register/passenger")
 async def register_passenger(data: UserRegisterPassenger):
     """Register a new passenger"""
     try:
+        admin_id = resolve_admin_id(data.admin_id)
         # Check if phone/email exists
         existing = supabase.table("passengers").select("id").or_(f"phone.eq.{data.phone},email.eq.{data.email}").execute()
         if existing.data:
@@ -693,7 +871,8 @@ async def register_passenger(data: UserRegisterPassenger):
             "profile_photo": data.profile_photo,
             "wallet_balance": 0,
             "is_verified": True,  # Set to True after OTP in production
-            "is_active": True
+            "is_active": True,
+            "admin_id": admin_id
         }
         
         result = supabase.table("passengers").insert(passenger_data).execute()
@@ -726,6 +905,7 @@ async def register_passenger(data: UserRegisterPassenger):
 async def register_driver(data: UserRegisterDriver):
     """Register a new driver"""
     try:
+        admin_id = resolve_admin_id(data.admin_id)
         # Check if phone/email exists
         existing = supabase.table("drivers").select("id").or_(f"phone.eq.{data.phone},email.eq.{data.email}").execute()
         if existing.data:
@@ -753,7 +933,8 @@ async def register_driver(data: UserRegisterDriver):
             "is_active": True,
             "rating": 5.0,
             "total_rides": 0,
-            "wallet_balance": 0
+            "wallet_balance": 0,
+            "admin_id": admin_id
         }
         
         result = supabase.table("drivers").insert(driver_data).execute()
@@ -1507,6 +1688,64 @@ async def get_drivers(status: Optional[str] = None, city: Optional[str] = None, 
         logger.error(f"Get drivers error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.post("/drivers/remind-missing-docs")
+async def remind_drivers_missing_docs(payload: DriverReminderRequest, current_user: dict = Depends(get_current_user)):
+    """Send reminder notifications to drivers with missing documents"""
+    if current_user['user_type'] not in ['superadmin', 'admin', 'subadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    try:
+        query = supabase.table("drivers").select(
+            "id,full_name,phone,email,city,admin_id,status,license_photo,vehicle_photo,vehicle_papers"
+        )
+
+        admin_id = None
+        admin_cities: List[str] = []
+        admin_brand_name = None
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            admin_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
+            admin = supabase.table("admins").select("cities,brand_name").eq("id", admin_id).execute()
+            if admin.data:
+                admin_cities = admin.data[0].get('cities', []) or []
+                admin_brand_name = admin.data[0].get('brand_name')
+
+        if payload.status:
+            query = query.eq("status", payload.status)
+        if payload.driver_id:
+            query = query.eq("id", payload.driver_id)
+        if admin_cities:
+            query = query.in_("city", admin_cities)
+
+        result = query.execute()
+        drivers = result.data or []
+
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            if admin_brand_name:
+                drivers = [d for d in drivers if d.get('admin_id') == admin_id]
+            else:
+                drivers = [d for d in drivers if (not d.get('admin_id')) or d.get('admin_id') == admin_id]
+
+        missing = [
+            d for d in drivers
+            if not d.get('license_photo') or not d.get('vehicle_photo') or not d.get('vehicle_papers')
+        ]
+
+        notified = 0
+        message = (payload.message or "").strip() or "Tanpri fini enskripsyon ou epi telechaje dokiman ki manke yo."
+        for driver in missing:
+            create_notification(
+                driver.get("id"),
+                "driver",
+                "Dokiman obligatwa",
+                message
+            )
+            notified += 1
+
+        return {"success": True, "notified": notified}
+    except Exception as e:
+        logger.error(f"Driver reminder error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @api_router.put("/drivers/{driver_id}/approve")
 async def approve_driver(driver_id: str, current_user: dict = Depends(get_current_user)):
     """Approve a driver (after document verification)"""
@@ -1723,6 +1962,16 @@ async def get_notifications(current_user: dict = Depends(get_current_user)):
         return {"notifications": result.data or []}
     except Exception as e:
         logger.error(f"Notifications error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/notifications/mark-read")
+async def mark_notifications_read(current_user: dict = Depends(get_current_user)):
+    """Mark all notifications as read for current user"""
+    try:
+        supabase.table("notifications").update({"is_read": True}).eq("user_id", current_user['user_id']).eq("user_type", current_user['user_type']).execute()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Mark notifications read error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============== PASSENGER ENDPOINTS ==============
@@ -2218,16 +2467,291 @@ async def get_rides(status: Optional[str] = None, current_user: dict = Depends(g
         if current_user['user_type'] == 'passenger':
             query = query.eq("passenger_id", current_user['user_id'])
         elif current_user['user_type'] == 'driver':
-            query = query.eq("driver_id", current_user['user_id'])
+            driver_info = supabase.table("drivers").select("admin_id,vehicle_type").eq("id", current_user['user_id']).execute()
+            driver_data = driver_info.data[0] if driver_info.data else {}
+            driver_admin_id = driver_data.get("admin_id")
+            driver_vehicle = driver_data.get("vehicle_type")
+
+            if status and status != "pending":
+                query = query.eq("driver_id", current_user['user_id']).eq("status", status)
+            else:
+                if driver_admin_id:
+                    scope_clause = f"and(status.eq.pending,driver_id.is.null,admin_id.eq.{driver_admin_id},vehicle_type.eq.{driver_vehicle})"
+                else:
+                    scope_clause = f"and(status.eq.pending,driver_id.is.null,admin_id.is.null,vehicle_type.eq.{driver_vehicle})"
+                if status == "pending":
+                    query = query.or_(f"and(driver_id.eq.{current_user['user_id']},status.eq.pending),{scope_clause}")
+                else:
+                    query = query.or_(f"driver_id.eq.{current_user['user_id']},{scope_clause}")
         
-        if status:
+        if status and current_user['user_type'] != 'driver':
             query = query.eq("status", status)
         
         result = query.order("created_at", desc=True).execute()
-        return {"rides": result.data or []}
+        rides = result.data or []
+
+        if current_user['user_type'] == 'driver' and rides:
+            passenger_ids = list({r.get("passenger_id") for r in rides if r.get("passenger_id")})
+            if passenger_ids:
+                passengers = (
+                    supabase.table("passengers")
+                    .select("id,full_name,phone")
+                    .in_("id", passenger_ids)
+                    .execute()
+                    .data
+                    or []
+                )
+                passenger_map = {p["id"]: p for p in passengers}
+                for ride in rides:
+                    passenger = passenger_map.get(ride.get("passenger_id"))
+                    if passenger:
+                        ride["passenger_name"] = passenger.get("full_name")
+                        ride["passenger_phone"] = passenger.get("phone")
+
+        return {"rides": rides}
     except Exception as e:
         logger.error(f"Get rides error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+async def _create_test_ride_for_driver(driver_id: str):
+    try:
+        driver_result = supabase.table("drivers").select(
+            "id,full_name,vehicle_type,city,admin_id,current_lat,current_lng"
+        ).eq("id", driver_id).execute()
+        if not driver_result.data:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        driver = driver_result.data[0]
+
+        active_check = (
+            supabase.table("rides")
+            .select("id")
+            .eq("driver_id", driver_id)
+            .in_("status", ["pending", "accepted", "arrived", "started"])
+            .execute()
+        )
+        if active_check.data:
+            return {"success": False, "message": "Driver already has an active ride"}
+
+        base_lat = float(driver.get("current_lat") or 18.5944)
+        base_lng = float(driver.get("current_lng") or -72.3074)
+        pickup_lat, pickup_lng = generate_test_coords(base_lat, base_lng, 0.5, 2.0)
+        dest_lat, dest_lng = generate_test_coords(base_lat, base_lng, 1.5, 5.0)
+
+        distance_km = calculate_distance_km(pickup_lat, pickup_lng, dest_lat, dest_lng)
+        duration_min = max(5, distance_km * 3)
+
+        cities = supabase.table("cities").select("*").execute().data or []
+        city_name = driver.get("city") or ""
+        city_data = next(
+            (c for c in cities if str(c.get("name", "")).lower() == str(city_name).lower()),
+            cities[0] if cities else {
+                'base_fare_moto': 50,
+                'base_fare_car': 100,
+                'price_per_km_moto': 25,
+                'price_per_km_car': 50,
+                'price_per_min_moto': 5,
+                'price_per_min_car': 10,
+                'surge_multiplier': 1.0
+            }
+        )
+
+        vehicle_type = driver.get("vehicle_type") or "car"
+        pricing = calculate_ride_price(city_data, distance_km, duration_min, None)
+
+        ride_data = {
+            "id": str(uuid.uuid4()),
+            "passenger_id": None,
+            "driver_id": driver_id,
+            "pickup_lat": pickup_lat,
+            "pickup_lng": pickup_lng,
+            "pickup_address": f"Pickup Test ({city_name or 'TapTapGo'})",
+            "destination_lat": dest_lat,
+            "destination_lng": dest_lng,
+            "destination_address": f"Destination Test ({city_name or 'TapTapGo'})",
+            "vehicle_type": vehicle_type,
+            "status": "pending",
+            "estimated_distance": round(distance_km, 2),
+            "estimated_duration": round(duration_min, 2),
+            "estimated_price": pricing.get("total", 0),
+            "payment_method": "cash",
+            "city": city_name or None,
+            "admin_id": driver.get("admin_id")
+        }
+
+        result = supabase.table("rides").insert(ride_data).execute()
+        if result.data:
+            create_notification(
+                driver_id,
+                "driver",
+                "Kous tès",
+                "Yon kous tès disponib pou ou."
+            )
+            return {"success": True, "ride": result.data[0]}
+        raise HTTPException(status_code=500, detail="Test ride creation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create test ride error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def _create_test_ride_for_scope(
+    admin_id: Optional[str],
+    city_name: Optional[str],
+    vehicle_type: str,
+    pickup_lat: Optional[float] = None,
+    pickup_lng: Optional[float] = None,
+    pickup_address: Optional[str] = None,
+    destination_lat: Optional[float] = None,
+    destination_lng: Optional[float] = None,
+    destination_address: Optional[str] = None
+):
+    try:
+        base_lat = 18.5944
+        base_lng = -72.3074
+        if pickup_lat is None or pickup_lng is None:
+            pickup_lat, pickup_lng = generate_test_coords(base_lat, base_lng, 0.5, 2.0)
+        if destination_lat is None or destination_lng is None:
+            destination_lat, destination_lng = generate_test_coords(base_lat, base_lng, 1.5, 5.0)
+
+        distance_km = calculate_distance_km(pickup_lat, pickup_lng, destination_lat, destination_lng)
+        duration_min = max(5, distance_km * 3)
+
+        cities = supabase.table("cities").select("*").execute().data or []
+        city_data = next(
+            (c for c in cities if str(c.get("name", "")).lower() == str(city_name or "").lower()),
+            cities[0] if cities else {
+                'base_fare_moto': 50,
+                'base_fare_car': 100,
+                'price_per_km_moto': 25,
+                'price_per_km_car': 50,
+                'price_per_min_moto': 5,
+                'price_per_min_car': 10,
+                'surge_multiplier': 1.0
+            }
+        )
+
+        pricing = calculate_ride_price(city_data, distance_km, duration_min, None)
+
+        ride_data = {
+            "id": str(uuid.uuid4()),
+            "passenger_id": None,
+            "driver_id": None,
+            "pickup_lat": pickup_lat,
+            "pickup_lng": pickup_lng,
+            "pickup_address": pickup_address or f"Pickup Test ({city_name or 'TapTapGo'})",
+            "destination_lat": destination_lat,
+            "destination_lng": destination_lng,
+            "destination_address": destination_address or f"Destination Test ({city_name or 'TapTapGo'})",
+            "vehicle_type": vehicle_type,
+            "status": "pending",
+            "estimated_distance": round(distance_km, 2),
+            "estimated_duration": round(duration_min, 2),
+            "estimated_price": pricing.get("total", 0),
+            "payment_method": "cash",
+            "city": city_name or None,
+            "admin_id": admin_id
+        }
+
+        result = supabase.table("rides").insert(ride_data).execute()
+        if result.data:
+            return result.data[0]
+        raise HTTPException(status_code=500, detail="Test ride creation failed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create test ride scope error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/rides/test")
+async def create_test_ride_admin(payload: TestRideRequest, current_user: dict = Depends(get_current_user)):
+    """Create a test ride for a specific driver (admin/superadmin)"""
+    if current_user['user_type'] not in ['admin', 'subadmin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if payload.driver_id:
+        return await _create_test_ride_for_driver(payload.driver_id)
+
+    admin_id = None
+    admin_city = None
+    admin_brand_name = None
+    if current_user['user_type'] == 'superadmin':
+        admin_id = payload.admin_id
+    elif current_user['user_type'] in ['admin', 'subadmin']:
+        admin_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
+        admin = supabase.table("admins").select("cities,brand_name").eq("id", admin_id).execute()
+        if admin.data:
+            admin_city = (admin.data[0].get("cities") or [None])[0]
+            admin_brand_name = admin.data[0].get("brand_name")
+
+    city_name = payload.city or admin_city
+    vehicle_type = payload.vehicle_type
+    created = []
+
+    if vehicle_type:
+        created.append(await _create_test_ride_for_scope(
+            admin_id,
+            city_name,
+            vehicle_type,
+            pickup_lat=payload.pickup_lat,
+            pickup_lng=payload.pickup_lng,
+            pickup_address=payload.pickup_address,
+            destination_lat=payload.destination_lat,
+            destination_lng=payload.destination_lng,
+            destination_address=payload.destination_address
+        ))
+    else:
+        for vtype in ["moto", "car"]:
+            created.append(await _create_test_ride_for_scope(
+                admin_id,
+                city_name,
+                vtype,
+                pickup_lat=payload.pickup_lat,
+                pickup_lng=payload.pickup_lng,
+                pickup_address=payload.pickup_address,
+                destination_lat=payload.destination_lat,
+                destination_lng=payload.destination_lng,
+                destination_address=payload.destination_address
+            ))
+
+    return {"success": True, "created": len(created), "rides": created}
+
+@api_router.get("/rides/test/active")
+async def list_active_test_rides(
+    admin_id: Optional[str] = None,
+    vehicle_type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """List active (pending) test rides for admin/superadmin"""
+    if current_user['user_type'] not in ['admin', 'subadmin', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        scoped_admin_id = admin_id
+        if current_user['user_type'] in ['admin', 'subadmin']:
+            scoped_admin_id = current_user['admin_id'] if current_user['user_type'] == 'subadmin' else current_user['user_id']
+
+        query = supabase.table("rides").select(
+            "id,admin_id,vehicle_type,city,pickup_address,destination_address,status,created_at"
+        ).eq("status", "pending").is_("passenger_id", None)
+
+        if scoped_admin_id:
+            query = query.eq("admin_id", scoped_admin_id)
+        else:
+            query = query.is_("admin_id", None)
+
+        if vehicle_type:
+            query = query.eq("vehicle_type", vehicle_type)
+
+        result = query.order("created_at", desc=True).execute()
+        return {"rides": result.data or []}
+    except Exception as e:
+        logger.error(f"List test rides error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/rides/test/auto")
+async def create_test_ride_driver(current_user: dict = Depends(get_current_user)):
+    """Create a test ride for the current driver"""
+    if current_user['user_type'] != 'driver':
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return await _create_test_ride_for_driver(current_user['user_id'])
 
 @api_router.put("/rides/{ride_id}/accept")
 async def accept_ride(ride_id: str, current_user: dict = Depends(get_current_user)):
@@ -2298,6 +2822,11 @@ async def update_ride_status(ride_id: str, data: RideStatusUpdate, current_user:
                 raise HTTPException(status_code=403, detail="Not authorized")
         elif current_user['user_type'] not in ['admin', 'subadmin', 'superadmin']:
             raise HTTPException(status_code=403, detail="Not authorized")
+
+        if data.status == 'completed':
+            estimated_price = ride.get('estimated_price') or 0
+            final_price = ride.get('final_price') or estimated_price
+            update_data['final_price'] = final_price
 
         result = supabase.table("rides").update(update_data).eq("id", ride_id).execute()
         
@@ -2502,8 +3031,11 @@ async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_
                 'default_method'
             })
         if current_user['user_type'] == 'admin':
-            allowed_fields.update({'logo', 'brand_name', 'primary_color', 'secondary_color', 'tertiary_color'})
+            allowed_fields.update({'logo', 'brand_name', 'primary_color', 'secondary_color', 'tertiary_color', 'cities'})
         update_data = {k: v for k, v in (data or {}).items() if k in allowed_fields}
+        if current_user['user_type'] == 'admin' and 'cities' in update_data:
+            if not isinstance(update_data['cities'], list):
+                raise HTTPException(status_code=400, detail="Cities must be an array")
         if not update_data:
             raise HTTPException(status_code=400, detail="No fields to update")
         required_fields = {'full_name', 'email', 'phone'}
@@ -2556,6 +3088,114 @@ async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_
         raise
     except Exception as e:
         logger.error(f"Update profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Build APK routes (SuperAdmin)
+@api_router.post("/superadmin/builds/generate")
+async def generate_build(data: BuildRequest, current_user: dict = Depends(get_current_user)):
+    """Générer un build APK pour une marque"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can generate builds")
+
+    try:
+        brand = supabase.table("admins").select("*").eq("id", data.brand_id).execute()
+        if not brand.data:
+            raise HTTPException(status_code=404, detail="Brand not found")
+
+        build_id = await build_service.create_build(data.brand_id, data.dict())
+        return {"success": True, "build_id": build_id, "message": "Build started successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Build generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/superadmin/builds/status/{build_id}")
+async def get_build_status(build_id: str, current_user: dict = Depends(get_current_user)):
+    """Obtenir le statut d'un build"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can view builds")
+
+    try:
+        status = build_service.get_build_status(build_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Build not found")
+        return {"build": status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get build status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/superadmin/builds")
+async def list_builds(brand_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Lister tous les builds"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can view builds")
+
+    try:
+        builds = build_service.list_builds(brand_id)
+        return {"builds": builds}
+    except Exception as e:
+        logger.error(f"List builds error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/superadmin/builds/download/{build_id}")
+async def download_build(build_id: str, current_user: dict = Depends(get_current_user)):
+    """Télécharger l'APK d'un build"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can download builds")
+
+    try:
+        status = build_service.get_build_status(build_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Build not found")
+        if status.get("status") != "success":
+            raise HTTPException(status_code=400, detail=f"Build not ready. Status: {status.get('status')}")
+
+        apk_path = Path(status.get("apk_path", ""))
+        if not apk_path.exists():
+            raise HTTPException(status_code=404, detail="APK file not found on server")
+
+        return FileResponse(
+            path=str(apk_path),
+            media_type="application/vnd.android.package-archive",
+            filename=apk_path.name,
+            headers={"Content-Disposition": f"attachment; filename={apk_path.name}"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download build error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/superadmin/builds/cache/clear")
+async def clear_build_cache(current_user: dict = Depends(get_current_user)):
+    """Netwaye cache build pou SuperAdmin"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can clear build cache")
+    try:
+        result = build_service.clear_build_cache()
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Clear build cache error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/superadmin/builds/failed")
+async def clear_failed_builds(brand_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """Supprimer les builds échoués"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can clear failed builds")
+    try:
+        result = build_service.clear_failed_builds(brand_id)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Clear failed builds error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Include the router in the main app

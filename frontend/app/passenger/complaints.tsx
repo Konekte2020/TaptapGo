@@ -140,9 +140,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   rideCard: {
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.surface,
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 16,
     ...Shadows.small,
   },
   rideCardActive: {
@@ -167,8 +167,11 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   form: {
-    padding: 20,
-    paddingTop: 0,
+    margin: 20,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   formLabel: {
     fontSize: 12,
@@ -192,9 +195,10 @@ const styles = StyleSheet.create({
   submitButton: {
     marginTop: 10,
     backgroundColor: Colors.primary,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 12,
+    borderRadius: 14,
     alignItems: 'center',
+    ...Shadows.small,
   },
   submitText: {
     color: 'white',

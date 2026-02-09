@@ -1,4 +1,189 @@
 export const HAITI_DEPARTMENTS = [
+  'Latibonit',
+  'Sant',
+  'Grandans',
+  'Nip',
+  'Nò',
+  'Nòdès',
+  'Nòdwès',
+  'Lwès',
+  'Sid',
+  'Sidès',
+];
+
+export const DEPARTMENT_CITIES: Record<string, string[]> = {
+  Latibonit: [
+    'Desalin',
+    'Desdun',
+    'Gran Salin',
+    'Ti Rivyè Latibonit',
+    'Gonayiv',
+    'Enri',
+    'Lestè',
+    'Gwo Mòn',
+    'Ans Wouj',
+    'Tè Nèf',
+    'Mamelad',
+    'Sen Mikal Latala',
+    'Sen Mak',
+    'Arkaden',
+    'La Chapèl',
+    'Lyankou',
+    'Vèret',
+    'Montrwi',
+  ],
+  Sant: [
+    'Sèka Lasous',
+    'Toma Sik',
+    'Ench',
+    'Sèka Kavajal',
+    'Masad',
+    'Tomonn',
+    'Laskawobas',
+    'Batist',
+    'Bèlade',
+    'Savanèt',
+    'Mibalè',
+    'Boukan Kare',
+    'Sodo',
+  ],
+  Grandans: [
+    'Ansdènò',
+    'Dam Mari',
+    'Lezwa',
+    'Bomon',
+    'Koral',
+    'Pestèl',
+    'Wozò',
+    'Abriko',
+    'Bonbon',
+    'Chanbelan',
+    'Jeremi',
+    'Marfran',
+    'Moron',
+  ],
+  Nip: [
+    'Ansavo',
+    'Arno',
+    'Lazil',
+    'Ti Twou Nip',
+    'Plezans Sid',
+    'Baradè',
+    'Gran Boukan',
+    'Fon Nèg',
+    'Miragwàn',
+    'Payan',
+    'Ti Rivyè Nip',
+  ],
+  'Nò': [
+    'Akil di Nò',
+    'Milòt',
+    'Plèn di Nò',
+    'Bòy',
+    'Pòt Mago',
+    'Okap',
+    'Limonad',
+    'Katye Moren',
+    'Gran Rivyè di Nò',
+    'Bawon',
+    'Lenbe',
+    'Ba Lenbe',
+    'Plezans',
+    'Pilat',
+    'Sen Rafayèl',
+    'Dondon',
+    'Laviktwa',
+    'Piyon',
+    'Rankit',
+  ],
+  'Nòdès': [
+    'Fò Libète',
+    'Pèch',
+    'Fèrye',
+    'Wanament',
+    'Kapotiy',
+    'Mòn Òganize',
+    'Twou di Nò',
+    'Karakòl',
+    'Sen Suzanne',
+    'Gran Basen',
+    'Tèrye Wouj',
+    'Valyè',
+    'Karis',
+    'Momben Kwoch',
+  ],
+  'Nòdwès': [
+    'Mòl Sen Nikola',
+    'Bèdèn',
+    'Bombadopolis',
+    'Jan Rabel',
+    'Pòtdepè',
+    'Basen Ble',
+    'Chansolm',
+    'Lapwent',
+    'Latòti',
+    'Senlwi di Nò',
+    'Ansafòlè',
+  ],
+  Lwès: [
+    'Akayè',
+    'Kabare',
+    'Kwadèbouke',
+    'Kornyon',
+    'Fonvèret',
+    'Gantye',
+    'Tomazo',
+    'Ansagalè',
+    'Pwentarakèt',
+    'Leyogàn',
+    'Gran Gwav',
+    'Ti Gwav',
+    'Kafou',
+    'Dèlma',
+    'Gresye',
+    'Kenskòf',
+    'Petyonvil',
+    'Tabarre',
+    'Site Solèy',
+    'Pòtoprens',
+  ],
+  Sid: [
+    'Aken',
+    'Kavalon',
+    'Senlwi di Sid',
+    'Fonblan',
+    'Okay',
+    'Kanperen',
+    'Chantal',
+    'Ilavach',
+    'Manich',
+    'Tòbèk',
+    'Chadonnyè',
+    'Lezanglè',
+    'Tibwon',
+    'Koto',
+    'Pòtapiman',
+    'Wòchabato',
+    'Pòtsalut',
+    'Arnikèt',
+    'Senjan di Sid',
+  ],
+  'Sidès': [
+    'Benè',
+    'Kotdefè',
+    'Bèlans',
+    'Ansapit',
+    'Gran Gozye',
+    'Tyòt',
+    'Jakmèl',
+    'Kay Jakmèl',
+    'Vale Jakmèl',
+    'Marigo',
+  ],
+};
+
+// Données legacy (FR) pou retro-konpatibilite
+export const LEGACY_DEPARTMENTS = [
   'Artibonite',
   'Centre',
   "Grand'Anse",
@@ -11,7 +196,7 @@ export const HAITI_DEPARTMENTS = [
   'Sud-Est',
 ];
 
-export const DEPARTMENT_CITIES: Record<string, string[]> = {
+export const LEGACY_DEPARTMENT_CITIES: Record<string, string[]> = {
   Artibonite: [
     'Dessalines',
     'Desdunes',
@@ -182,7 +367,43 @@ export const DEPARTMENT_CITIES: Record<string, string[]> = {
   ],
 };
 
+export const LEGACY_DEPARTMENT_MAP: Record<string, string> = {
+  Artibonite: 'Latibonit',
+  Centre: 'Sant',
+  "Grand'Anse": 'Grandans',
+  Nippes: 'Nip',
+  Nord: 'Nò',
+  'Nord-Est': 'Nòdès',
+  'Nord-Ouest': 'Nòdwès',
+  Ouest: 'Lwès',
+  Sud: 'Sid',
+  'Sud-Est': 'Sidès',
+};
+
 export const HAITI_CITIES = Object.values(DEPARTMENT_CITIES).flat();
+
+export const normalizeHaitiDepartment = (value: string) => {
+  if (!value) return '';
+  const trimmed = value.trim();
+  if (HAITI_DEPARTMENTS.includes(trimmed)) return trimmed;
+  return LEGACY_DEPARTMENT_MAP[trimmed] || trimmed;
+};
+
+export const normalizeHaitiCity = (value: string) => {
+  if (!value) return '';
+  const trimmed = value.trim();
+  if (HAITI_CITIES.includes(trimmed)) return trimmed;
+  const lower = trimmed.toLowerCase();
+  for (const [legacyDept, legacyCities] of Object.entries(LEGACY_DEPARTMENT_CITIES)) {
+    const index = legacyCities.findIndex((city) => city.toLowerCase() === lower);
+    if (index >= 0) {
+      const creoleDept = LEGACY_DEPARTMENT_MAP[legacyDept];
+      const creoleCities = DEPARTMENT_CITIES[creoleDept] || [];
+      return creoleCities[index] || trimmed;
+    }
+  }
+  return trimmed;
+};
 
 // Default location (Port-au-Prince)
 export const DEFAULT_LOCATION = {

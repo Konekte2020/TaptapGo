@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -64,12 +65,30 @@ export default function DriverEditProfile() {
     }
   };
 
-  const handlePickPhoto = async () => {
+  const openImagePicker = async (source: 'camera' | 'library') => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè kamera.');
+          return;
+        }
+      } else if (Platform.OS !== 'web') {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Otorizasyon refize', 'Tanpri pèmèt aksè galri a.');
+          return;
+        }
+      }
+
+      const picker =
+        source === 'camera'
+          ? ImagePicker.launchCameraAsync
+          : ImagePicker.launchImageLibraryAsync;
+
+      const result = await picker({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
+        allowsEditing: false,
         quality: 0.6,
         base64: true,
       });
@@ -92,6 +111,18 @@ export default function DriverEditProfile() {
     } finally {
       setSavingPhoto(false);
     }
+  };
+
+  const handlePickPhoto = () => {
+    Alert.alert(
+      'Ajoute foto',
+      'Chwazi sous foto a',
+      [
+        { text: 'Galri', onPress: () => openImagePicker('library') },
+        { text: 'Kamera', onPress: () => openImagePicker('camera') },
+        { text: 'Anile', style: 'cancel' },
+      ]
+    );
   };
 
   return (
@@ -169,8 +200,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   card: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     ...Shadows.small,
     gap: 12,
@@ -189,6 +220,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
+    ...Shadows.small,
   },
   avatarPlaceholder: {
     width: 64,
@@ -197,6 +229,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.secondary,
     justifyContent: 'center',
     alignItems: 'center',
+    ...Shadows.small,
   },
   avatarText: {
     fontSize: 24,
@@ -210,7 +243,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderRadius: 14,
+    ...Shadows.small,
   },
   photoButtonText: {
     color: 'white',
@@ -219,7 +253,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: Colors.surface,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     fontSize: 14,
     color: Colors.text,
@@ -227,9 +261,10 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: Colors.primary,
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
     marginTop: 4,
+    ...Shadows.small,
   },
   saveButtonDisabled: {
     opacity: 0.6,

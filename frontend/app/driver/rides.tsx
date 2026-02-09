@@ -22,6 +22,13 @@ export default function DriverRides() {
     fetchRides();
   }, [filter]);
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchRides();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
   const fetchRides = async () => {
     setLoading(true);
     try {
@@ -228,8 +235,9 @@ const styles = StyleSheet.create({
   filterButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 18,
     backgroundColor: Colors.surface,
+    ...Shadows.small,
   },
   filterActive: {
     backgroundColor: Colors.secondary,
@@ -247,8 +255,8 @@ const styles = StyleSheet.create({
     paddingTop: 0,
   },
   rideCard: {
-    backgroundColor: Colors.background,
-    borderRadius: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 18,
     padding: 16,
     marginBottom: 12,
     ...Shadows.small,
@@ -318,12 +326,13 @@ const styles = StyleSheet.create({
   acceptButton: {
     flexDirection: 'row',
     backgroundColor: Colors.success,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
     marginTop: 12,
+    ...Shadows.small,
   },
   acceptButtonText: {
     color: 'white',
@@ -332,12 +341,13 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flexDirection: 'row',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
     marginTop: 12,
+    ...Shadows.small,
   },
   actionButtonText: {
     color: 'white',

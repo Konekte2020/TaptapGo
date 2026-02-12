@@ -16,9 +16,12 @@ export default function AdminPricing() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    base_fare: '',
-    price_per_km: '',
-    price_per_min: '',
+    base_fare_moto: '',
+    price_per_km_moto: '',
+    price_per_min_moto: '',
+    base_fare_car: '',
+    price_per_km_car: '',
+    price_per_min_car: '',
     surge_multiplier: '1',
     commission_rate: '',
   });
@@ -31,13 +34,16 @@ export default function AdminPricing() {
     setLoading(true);
     try {
       const response = await adminPricingAPI.get();
-      const pricing = response.data.pricing || {};
+      const p = response.data.pricing || {};
       setForm({
-        base_fare: String(pricing.base_fare ?? ''),
-        price_per_km: String(pricing.price_per_km ?? ''),
-        price_per_min: String(pricing.price_per_min ?? ''),
-        surge_multiplier: String(pricing.surge_multiplier ?? 1),
-        commission_rate: String(pricing.commission_rate ?? ''),
+        base_fare_moto: String(p.base_fare_moto ?? p.base_fare ?? ''),
+        price_per_km_moto: String(p.price_per_km_moto ?? p.price_per_km ?? ''),
+        price_per_min_moto: String(p.price_per_min_moto ?? p.price_per_min ?? ''),
+        base_fare_car: String(p.base_fare_car ?? p.base_fare ?? ''),
+        price_per_km_car: String(p.price_per_km_car ?? p.price_per_km ?? ''),
+        price_per_min_car: String(p.price_per_min_car ?? p.price_per_min ?? ''),
+        surge_multiplier: String(p.surge_multiplier ?? 1),
+        commission_rate: String(p.commission_rate ?? ''),
       });
     } catch (error) {
       console.error('Fetch pricing error:', error);
@@ -48,14 +54,17 @@ export default function AdminPricing() {
 
   const handleSave = async () => {
     const required = [
-      form.base_fare,
-      form.price_per_km,
-      form.price_per_min,
+      form.base_fare_moto,
+      form.price_per_km_moto,
+      form.price_per_min_moto,
+      form.base_fare_car,
+      form.price_per_km_car,
+      form.price_per_min_car,
       form.surge_multiplier,
       form.commission_rate,
     ];
     if (required.some((v) => v === '' || v === null || v === undefined)) {
-      Alert.alert('Erè', 'Tanpri ranpli tout chan yo');
+      Alert.alert('Erè', 'Tanpri ranpli tout chan yo (moto + machin)');
       return;
     }
 
@@ -74,9 +83,12 @@ export default function AdminPricing() {
     setSaving(true);
     try {
       await adminPricingAPI.update({
-        base_fare: parseFloat(form.base_fare),
-        price_per_km: parseFloat(form.price_per_km),
-        price_per_min: parseFloat(form.price_per_min),
+        base_fare_moto: parseFloat(form.base_fare_moto),
+        price_per_km_moto: parseFloat(form.price_per_km_moto),
+        price_per_min_moto: parseFloat(form.price_per_min_moto),
+        base_fare_car: parseFloat(form.base_fare_car),
+        price_per_km_car: parseFloat(form.price_per_km_car),
+        price_per_min_car: parseFloat(form.price_per_min_car),
         surge_multiplier: surgeValue,
         commission_rate: commissionValue,
       });
@@ -97,34 +109,68 @@ export default function AdminPricing() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Tarif Chofè</Text>
+          <Text style={styles.sectionTitle}>Tarif Chofè — Moto</Text>
           <View style={styles.inputRow}>
             <View style={styles.inputHalf}>
-              <Text style={styles.inputLabel}>Pri baz</Text>
+              <Text style={styles.inputLabel}>Pri baz (moto)</Text>
               <TextInput
                 style={styles.input}
-                value={form.base_fare}
-                onChangeText={(text) => setForm({ ...form, base_fare: text })}
+                value={form.base_fare_moto}
+                onChangeText={(text) => setForm({ ...form, base_fare_moto: text })}
                 keyboardType="numeric"
                 placeholder="0"
               />
             </View>
             <View style={styles.inputHalf}>
-              <Text style={styles.inputLabel}>Pri pa km</Text>
+              <Text style={styles.inputLabel}>Pri pa km (moto)</Text>
               <TextInput
                 style={styles.input}
-                value={form.price_per_km}
-                onChangeText={(text) => setForm({ ...form, price_per_km: text })}
+                value={form.price_per_km_moto}
+                onChangeText={(text) => setForm({ ...form, price_per_km_moto: text })}
                 keyboardType="numeric"
                 placeholder="0"
               />
             </View>
             <View style={styles.inputHalf}>
-              <Text style={styles.inputLabel}>Pri pa min</Text>
+              <Text style={styles.inputLabel}>Pri pa min (moto)</Text>
               <TextInput
                 style={styles.input}
-                value={form.price_per_min}
-                onChangeText={(text) => setForm({ ...form, price_per_min: text })}
+                value={form.price_per_min_moto}
+                onChangeText={(text) => setForm({ ...form, price_per_min_moto: text })}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+            </View>
+          </View>
+
+          <Text style={styles.sectionTitle}>Tarif Chofè — Machin</Text>
+          <View style={styles.inputRow}>
+            <View style={styles.inputHalf}>
+              <Text style={styles.inputLabel}>Pri baz (machin)</Text>
+              <TextInput
+                style={styles.input}
+                value={form.base_fare_car}
+                onChangeText={(text) => setForm({ ...form, base_fare_car: text })}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+            </View>
+            <View style={styles.inputHalf}>
+              <Text style={styles.inputLabel}>Pri pa km (machin)</Text>
+              <TextInput
+                style={styles.input}
+                value={form.price_per_km_car}
+                onChangeText={(text) => setForm({ ...form, price_per_km_car: text })}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+            </View>
+            <View style={styles.inputHalf}>
+              <Text style={styles.inputLabel}>Pri pa min (machin)</Text>
+              <TextInput
+                style={styles.input}
+                value={form.price_per_min_car}
+                onChangeText={(text) => setForm({ ...form, price_per_min_car: text })}
                 keyboardType="numeric"
                 placeholder="0"
               />

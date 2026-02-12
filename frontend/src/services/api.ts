@@ -194,6 +194,43 @@ export const superAdminAPI = {
   getStats: () => api.get('/superadmin/stats'),
 };
 
+// Landing page API (SuperAdmin gère tout)
+export type FooterLink = { label: string; href: string };
+export type FooterColumn = { title: string; links: FooterLink[] };
+export type FooterData = {
+  brand_title: string;
+  brand_text: string;
+  copyright: string;
+  columns: FooterColumn[];
+};
+
+export type WhiteLabelRequest = {
+  id: string;
+  company: string;
+  name: string;
+  phone: string;
+  email: string;
+  zone: string;
+  message?: string;
+  website?: string;
+  drivers_estimate?: number;
+  status: 'pending' | 'processed' | 'archived';
+  admin_notes?: string;
+  processed_at?: string;
+  created_at: string;
+};
+
+export const landingAPI = {
+  get: () => api.get<{ content: Record<string, string>; footer: FooterData }>('/landing'),
+  update: (content: Record<string, string | null>, footer?: FooterData | null) =>
+    api.put('/landing', { content, footer }),
+  reset: () => api.delete('/landing'),
+  whitelabelRequests: (status?: string) =>
+    api.get<{ requests: WhiteLabelRequest[] }>('/landing/whitelabel-requests', status ? { params: { status } } : {}),
+  processWhitelabelRequest: (id: string, status: string, admin_notes?: string) =>
+    api.patch(`/landing/whitelabel-requests/${id}`, { status, admin_notes }),
+};
+
 // Profile API
 export const profileAPI = {
   get: () => api.get('/profile'),
@@ -241,16 +278,33 @@ export const pricingAPI = {
   get: (scope: 'direct' | 'admin') => api.get('/pricing', { params: { scope } }),
   update: (
     scope: 'direct' | 'admin',
-    data: { base_fare: number; price_per_km: number; price_per_min: number; commission_rate?: number }
+    data: {
+      base_fare?: number;
+      price_per_km?: number;
+      price_per_min?: number;
+      base_fare_moto?: number;
+      base_fare_car?: number;
+      price_per_km_moto?: number;
+      price_per_km_car?: number;
+      price_per_min_moto?: number;
+      price_per_min_car?: number;
+      commission_rate?: number;
+    }
   ) => api.put('/pricing', data, { params: { scope } }),
 };
 
 export const adminPricingAPI = {
   get: () => api.get('/admin/pricing'),
   update: (data: {
-    base_fare: number;
-    price_per_km: number;
-    price_per_min: number;
+    base_fare?: number;
+    price_per_km?: number;
+    price_per_min?: number;
+    base_fare_moto?: number;
+    base_fare_car?: number;
+    price_per_km_moto?: number;
+    price_per_km_car?: number;
+    price_per_min_moto?: number;
+    price_per_min_car?: number;
     surge_multiplier: number;
     commission_rate: number;
   }) => api.put('/admin/pricing', data),
@@ -281,7 +335,11 @@ export const buildAPI = {
     }),
 
   clearBuildCache: () => api.post('/superadmin/builds/cache/clear'),
+  cancelBuild: (buildId: string) => api.post(`/superadmin/builds/${buildId}/cancel`),
   clearFailedBuilds: (brandId?: string) => api.delete('/superadmin/builds/failed', { params: { brand_id: brandId } }),
+
+  submitToPlayStore: (buildId: string, track: 'internal' | 'alpha' | 'beta' | 'production' = 'internal') =>
+    api.post('/superadmin/builds/submit', { build_id: buildId, track }),
 };
 
 export const adminPaymentAPI = {

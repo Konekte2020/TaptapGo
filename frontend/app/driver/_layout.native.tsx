@@ -11,7 +11,7 @@ export default function DriverLayout() {
         tabBarActiveTintColor: Colors.secondary,
         tabBarInactiveTintColor: Colors.textSecondary,
         tabBarStyle: {
-          backgroundColor: Colors.background,
+          backgroundColor: Colors.surface,
           borderTopColor: Colors.border,
           height: 60,
           paddingBottom: 8,
@@ -22,7 +22,7 @@ export default function DriverLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: 'Akèy',
+          title: 'Lakay',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
           ),
@@ -40,43 +40,28 @@ export default function DriverLayout() {
       <Tabs.Screen
         name="earnings"
         options={{
-          title: 'Revni',
+          title: 'Istorik',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cash" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="notifications"
-        options={{
-          title: 'Notifikasyon',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="notifications" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="complaints"
-        options={{
-          title: 'Plent',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="alert-circle" size={size} color={color} />
+            <Ionicons name="time" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profil',
+          title: 'Pwofil',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person" size={size} color={color} />
           ),
         }}
       />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
+      <Tabs.Screen name="complaints" options={{ href: null }} />
       <Tabs.Screen name="edit-profile" options={{ href: null }} />
       <Tabs.Screen name="vehicle-info" options={{ href: null }} />
       <Tabs.Screen name="documents" options={{ href: null }} />
       <Tabs.Screen name="pending" options={{ href: null }} />
+      <Tabs.Screen name="current-ride" options={{ href: null }} />
       <Tabs.Screen name="help" options={{ href: null }} />
     </Tabs>
   );

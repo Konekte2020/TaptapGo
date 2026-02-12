@@ -38,7 +38,7 @@ export default function RootLayout() {
         <Stack.Screen name="passenger" options={{ headerShown: false }} />
         <Stack.Screen name="driver" options={{ headerShown: false }} />
         <Stack.Screen name="admin" options={{ headerShown: false }} />
-        <Stack.Screen name="admin-souadmin" options={{ headerShown: false }} />
+        <Stack.Screen name="souadmin" options={{ headerShown: false }} />
         <Stack.Screen name="superadmin" options={{ headerShown: false }} />
       </Stack>
     </>

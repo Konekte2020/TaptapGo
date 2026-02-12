@@ -6,11 +6,9 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Alert,
-  Switch,
   Dimensions,
   Image,
   ScrollView,
-  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -30,6 +28,7 @@ export default function DriverHome() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [pendingRides, setPendingRides] = useState<any[]>([]);
   const [activeRide, setActiveRide] = useState<any | null>(null);
+  const [todayStats, setTodayStats] = useState({ revenue: 0, ridesCount: 0 });
 
   const mapImageUrl = useMemo(() => {
     const lat = location?.coords.latitude ?? 18.5944;
@@ -91,22 +90,37 @@ export default function DriverHome() {
     };
   }, [isOnline]);
 
-  const openNavigation = (ride: any) => {
-    const lat = ride?.pickup_lat;
-    const lng = ride?.pickup_lng;
-    if (!lat || !lng) {
-      Alert.alert('Erè', 'Kowòdone pickup pa disponib.');
-      return;
-    }
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-    Linking.openURL(url).catch(() => {
-      Alert.alert('Erè', 'Pa kapab louvri kat la.');
-    });
-  };
+  useEffect(() => {
+    let active = true;
+    const fetchTodayStats = async () => {
+      try {
+        const response = await rideAPI.getAll('completed');
+        const rides = response.data?.rides || [];
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        let revenue = 0;
+        let count = 0;
+        rides.forEach((ride: any) => {
+          const rideDate = new Date(ride.completed_at || ride.created_at);
+          if (rideDate >= todayStart) {
+            count += 1;
+            revenue += ride.final_price || ride.estimated_price || 0;
+          }
+        });
+        if (active) setTodayStats({ revenue, ridesCount: count });
+      } catch (error) {
+        if (active) setTodayStats({ revenue: 0, ridesCount: 0 });
+      }
+    };
+    fetchTodayStats();
+    const t = setInterval(fetchTodayStats, 60000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, []);
 
-  const goToCurrentRide = () => {
-    router.push('/driver/current-ride');
-  };
+  const goToCurrentRide = () => router.push('/driver/current-ride');
 
   const handleAcceptRide = async (ride: any) => {
     try {
@@ -117,7 +131,6 @@ export default function DriverHome() {
       setActiveRide(rides.find((r: any) => activeStatuses.has(r.status)) || null);
       setPendingRides(rides.filter((r: any) => r.status === 'pending'));
       Alert.alert('Siksè', 'Ou aksepte kous la.');
-      openNavigation(ride);
       goToCurrentRide();
     } catch (error: any) {
       const message = error.response?.data?.detail || 'Pa kapab aksepte kous';
@@ -143,8 +156,6 @@ export default function DriverHome() {
       Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab anile kous');
     }
   };
-
-
 
   useEffect(() => {
     let active = true;
@@ -176,11 +187,8 @@ export default function DriverHome() {
         Alert.alert('Pèmisyon', 'Nou bezwen aksede lokalizasyon ou');
         return;
       }
-
       const loc = await Location.getCurrentPositionAsync({});
       setLocation(loc);
-
-      // Update location on server
       if (user?.id) {
         await driverAPI.updateLocation(user.id, loc.coords.latitude, loc.coords.longitude);
       }
@@ -191,7 +199,6 @@ export default function DriverHome() {
 
   const toggleOnlineStatus = async () => {
     const newStatus = !isOnline;
-
     if (newStatus && user?.status !== 'approved') {
       Alert.alert(
         'Erè',
@@ -199,16 +206,12 @@ export default function DriverHome() {
       );
       return;
     }
-    
     try {
       if (user?.id) {
         await driverAPI.updateOnlineStatus(user.id, newStatus);
         setIsOnline(newStatus);
         updateUser({ is_online: newStatus });
-        
-        if (newStatus) {
-          startLocationTracking();
-        }
+        if (newStatus) startLocationTracking();
       }
     } catch (error: any) {
       console.error('Toggle status error:', error);
@@ -219,40 +222,35 @@ export default function DriverHome() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Header */}
+        {/* Header: Logo TapTapGo + statut An liy */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.greeting}>Bonjou, {user?.full_name?.split(' ')[0]}!</Text>
-            <Text style={styles.subtitle}>
-              {user?.vehicle_type === 'moto' ? 'Moto' : 'Machin'} • {user?.vehicle_brand} {user?.vehicle_model}
-            </Text>
+          <View style={styles.logoRow}>
+            <Image
+              source={require('../../assets/images/logo.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
+            <Text style={styles.logoText}>TapTapGo</Text>
           </View>
-          <View style={[styles.ratingBadge, isOnline && styles.onlineBadge]}>
-            <Ionicons name="star" size={14} color={isOnline ? 'white' : Colors.warning} />
-            <Text style={[styles.ratingText, isOnline && { color: 'white' }]}>
-              {user?.rating?.toFixed(1) || '5.0'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Status Card */}
-        <View style={[styles.statusCard, isOnline && styles.statusOnline]}>
-          <View style={styles.statusInfo}>
+          <View style={styles.statusBadge}>
             <View style={[styles.statusDot, isOnline && styles.statusDotOnline]} />
-            <Text style={[styles.statusText, isOnline && { color: 'white' }]}>
-              {isOnline ? 'Ou ONLINE' : 'Ou OFFLINE'}
-            </Text>
+            <Text style={styles.statusLabel}>{isOnline ? 'An liy' : 'Offline'}</Text>
           </View>
-          <Switch
-            value={isOnline}
-            onValueChange={toggleOnlineStatus}
-            trackColor={{ false: Colors.border, true: 'rgba(255,255,255,0.3)' }}
-            thumbColor={isOnline ? 'white' : Colors.textSecondary}
-          />
         </View>
 
-        {/* Map Placeholder */}
-        <View style={styles.mapPlaceholder}>
+        {/* Bouton principal: Kòmanse travay */}
+        <TouchableOpacity
+          style={styles.mainButton}
+          onPress={toggleOnlineStatus}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.mainButtonText}>
+            {isOnline ? 'Sispann travay' : 'Kòmanse travay'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Carte */}
+        <View style={styles.mapWrapper}>
           {MapView ? (
             <MapView
               style={styles.mapImage}
@@ -264,41 +262,43 @@ export default function DriverHome() {
           ) : (
             <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
           )}
-          <Text style={styles.mapText}>
-            {isOnline ? 'Ap tann demann kous...' : 'Ale online pou resevwa kous'}
-          </Text>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <Ionicons name="car" size={24} color={Colors.primary} />
-            <Text style={styles.statValue}>{user?.total_rides || 0}</Text>
-            <Text style={styles.statLabel}>Kous Total</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Ionicons name="wallet" size={24} color={Colors.success} />
-            <Text style={styles.statValue}>{user?.wallet_balance || 0}</Text>
-            <Text style={styles.statLabel}>Balans (HTG)</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Ionicons name="star" size={24} color={Colors.warning} />
-            <Text style={styles.statValue}>{user?.rating?.toFixed(1) || '5.0'}</Text>
-            <Text style={styles.statLabel}>Rating</Text>
+          <View style={styles.mapWatermark}>
+            <Text style={styles.mapWatermarkText}>Google</Text>
           </View>
         </View>
 
-        {/* Info Card when offline */}
-        {!isOnline && (
-          <View style={styles.infoCard}>
-            <Ionicons name="information-circle" size={24} color={Colors.secondary} />
-            <Text style={styles.infoText}>
-              Ale ONLINE pou kOmanse resevwa demann kous nan zòn ou.
-            </Text>
+        {/* Deux cartes bleues */}
+        <View style={styles.blueCardsRow}>
+          <View style={styles.blueCard}>
+            <Ionicons name="location" size={22} color="#fff" />
+            <Text style={styles.blueCardLabel}>Kote ou ye</Text>
           </View>
-        )}
-        
-        {/* Active ride */}
+          <View style={styles.blueCard}>
+            <Ionicons name="time" size={22} color="#fff" />
+            <Text style={styles.blueCardLabel}>Tan reyèl</Text>
+          </View>
+        </View>
+
+        {/* Trois cartes blanches: Revni, Kous, Evalyasyon */}
+        <View style={styles.whiteCardsRow}>
+          <View style={styles.whiteCard}>
+            <Text style={styles.whiteCardLabel}>Revni jodi a:</Text>
+            <Text style={styles.whiteCardValue}>{todayStats.revenue} HTG</Text>
+          </View>
+          <View style={styles.whiteCard}>
+            <Text style={styles.whiteCardLabel}>Kous jodi a:</Text>
+            <Text style={styles.whiteCardValue}>{todayStats.ridesCount}</Text>
+          </View>
+          <View style={styles.whiteCard}>
+            <Text style={styles.whiteCardLabel}>Evalyasyon:</Text>
+            <View style={styles.ratingRow}>
+              <Text style={styles.whiteCardValue}>{user?.rating?.toFixed(1) || '4.9'}</Text>
+              <Ionicons name="star" size={20} color="#1A1F2B" />
+            </View>
+          </View>
+        </View>
+
+        {/* Carte kous aktif */}
         {isOnline && activeRide && (
           <View style={styles.activeRideCard}>
             <View style={styles.rideInfo}>
@@ -311,93 +311,51 @@ export default function DriverHome() {
               <Text style={styles.rideMeta}>
                 {activeRide.pickup_address} → {activeRide.destination_address}
               </Text>
-              <View style={styles.rideMetaRow}>
-                <Text style={styles.rideMeta}>
-                  {activeRide.estimated_distance || 0} km
-                </Text>
-                <Text style={styles.rideMeta}>
-                  {Math.round(activeRide.estimated_duration || 0)} min
-                </Text>
-              </View>
               <Text style={styles.passengerText}>
                 {activeRide.passenger_name ? `Pasaje: ${activeRide.passenger_name}` : 'Pasaje: —'}
               </Text>
-              <Text style={styles.paymentText}>
-                Pèman: {activeRide.payment_method || 'cash'}
-              </Text>
             </View>
             <View style={styles.rideActions}>
-              <TouchableOpacity
-                style={styles.acceptButton}
-                onPress={goToCurrentRide}
-              >
+              <TouchableOpacity style={styles.acceptButton} onPress={goToCurrentRide}>
                 <Text style={styles.acceptText}>Ale nan kous</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => handleCancelRide(activeRide)}
-              >
+              <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelRide(activeRide)}>
                 <Text style={styles.cancelText}>Anile</Text>
               </TouchableOpacity>
             </View>
           </View>
         )}
 
-        {/* Pending rides */}
-        {isOnline && !activeRide && (
+        {/* Kous disponib */}
+        {isOnline && !activeRide && pendingRides.length > 0 && (
           <View style={styles.ridesSection}>
             <Text style={styles.sectionTitle}>Kous disponib</Text>
-            {pendingRides.length === 0 ? (
-              <Text style={styles.emptyText}>Pa gen kous pou kounye a.</Text>
-            ) : (
-              pendingRides.map((ride) => (
-                <View key={ride.id} style={styles.rideCard}>
-                  <View style={styles.rideInfo}>
-                    <View style={styles.rideTopRow}>
-                      <Text style={styles.rideTitle}>
-                        {ride.vehicle_type === 'moto' ? 'Moto' : 'Machin'} • {ride.city || '—'}
-                      </Text>
-                      <Text style={styles.ridePrice}>{ride.estimated_price || 0} HTG</Text>
-                    </View>
-                    <Text style={styles.rideMeta}>
-                      {ride.pickup_address} → {ride.destination_address}
+            {pendingRides.map((ride) => (
+              <View key={ride.id} style={styles.rideCard}>
+                <View style={styles.rideInfo}>
+                  <View style={styles.rideTopRow}>
+                    <Text style={styles.rideTitle}>
+                      {ride.vehicle_type === 'moto' ? 'Moto' : 'Machin'} • {ride.city || '—'}
                     </Text>
-                    <View style={styles.rideMetaRow}>
-                      <Text style={styles.rideMeta}>
-                        {ride.estimated_distance || 0} km
-                      </Text>
-                      <Text style={styles.rideMeta}>
-                        {Math.round(ride.estimated_duration || 0)} min
-                      </Text>
-                    </View>
-                    <Text style={styles.passengerText}>
-                      {ride.passenger_name ? `Pasaje: ${ride.passenger_name}` : 'Pasaje: —'}
-                    </Text>
-                    <Text style={styles.paymentText}>
-                      Pèman: {ride.payment_method || 'cash'}
-                    </Text>
+                    <Text style={styles.ridePrice}>{ride.estimated_price || 0} HTG</Text>
                   </View>
-                  <View style={styles.rideActions}>
-                    <TouchableOpacity
-                      style={styles.acceptButton}
-                      onPress={() => handleAcceptRide(ride)}
-                    >
-                      <Text style={styles.acceptText}>Aksepte</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.cancelButton}
-                      onPress={() => handleCancelRide(ride)}
-                    >
-                      <Text style={styles.cancelText}>Anile</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <Text style={styles.rideMeta}>
+                    {ride.pickup_address} → {ride.destination_address}
+                  </Text>
                 </View>
-              ))
-            )}
+                <View style={styles.rideActions}>
+                  <TouchableOpacity style={styles.acceptButton} onPress={() => handleAcceptRide(ride)}>
+                    <Text style={styles.acceptText}>Aksepte</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelRide(ride)}>
+                    <Text style={styles.cancelText}>Anile</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
         )}
       </ScrollView>
-
     </SafeAreaView>
   );
 }
@@ -408,84 +366,70 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   content: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
     paddingBottom: 24,
-    padding: 20,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
+    alignItems: 'center',
+    marginBottom: 16,
   },
-  greeting: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.text,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    marginTop: 4,
-  },
-  ratingBadge: {
+  logoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 4,
-    ...Shadows.small,
+    gap: 8,
   },
-  onlineBadge: {
+  logoImage: {
+    width: 36,
+    height: 36,
+  },
+  logoText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.offline,
+  },
+  statusDotOnline: {
     backgroundColor: Colors.success,
   },
-  ratingText: {
+  statusLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text,
   },
-  statusCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 18,
-    padding: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  mainButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    marginBottom: 16,
     ...Shadows.small,
   },
-  statusOnline: {
-    backgroundColor: Colors.success,
-  },
-  statusInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: Colors.offline,
-  },
-  statusDotOnline: {
-    backgroundColor: 'white',
-  },
-  statusText: {
+  mainButtonText: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: Colors.text,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
-  mapPlaceholder: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    minHeight: 200,
+  mapWrapper: {
+    width: '100%',
+    height: 220,
+    borderRadius: 16,
     overflow: 'hidden',
+    marginBottom: 16,
+    backgroundColor: Colors.surface,
     ...Shadows.medium,
   },
   mapImage: {
@@ -493,56 +437,69 @@ const styles = StyleSheet.create({
     height: '100%',
     resizeMode: 'cover',
   },
-  mapText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    textAlign: 'center',
+  mapWatermark: {
     position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
+    bottom: 8,
+    left: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
     backgroundColor: 'rgba(255,255,255,0.9)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+  },
+  mapWatermarkText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontWeight: '500',
+  },
+  blueCardsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  blueCard: {
+    flex: 1,
+    backgroundColor: Colors.secondary,
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     ...Shadows.small,
   },
-  statsContainer: {
+  blueCardLabel: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  whiteCardsRow: {
     flexDirection: 'row',
     gap: 12,
     marginBottom: 20,
   },
-  statCard: {
+  whiteCard: {
     flex: 1,
     backgroundColor: Colors.surface,
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
+    borderRadius: 14,
+    padding: 14,
     ...Shadows.small,
   },
-  statValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: Colors.text,
-    marginTop: 8,
-  },
-  statLabel: {
-    fontSize: 11,
+  whiteCardLabel: {
+    fontSize: 12,
     color: Colors.textSecondary,
-    marginTop: 4,
+    marginBottom: 4,
   },
-  infoCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    padding: 16,
+  whiteCardValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  ratingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    ...Shadows.small,
+    gap: 4,
   },
   ridesSection: {
-    marginTop: 10,
-    marginBottom: 20,
+    marginTop: 4,
   },
   sectionTitle: {
     fontSize: 16,
@@ -567,7 +524,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 10,
     marginBottom: 20,
     ...Shadows.small,
   },
@@ -595,21 +551,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 4,
   },
-  rideMetaRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 2,
-  },
   passengerText: {
     fontSize: 12,
     color: Colors.textSecondary,
     marginTop: 4,
-  },
-  paymentText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 4,
-    textTransform: 'capitalize',
   },
   rideActions: {
     justifyContent: 'center',
@@ -637,11 +582,5 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 12,
     fontWeight: '700',
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 14,
-    color: Colors.textSecondary,
-    lineHeight: 20,
   },
 });

@@ -5,7 +5,7 @@ export default function AdminSouAdminIndex() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace('/admin-souadmin/dashboard');
+    router.replace('/souadmin/dashboard');
   }, []);
 
   return null;

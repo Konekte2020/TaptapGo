@@ -17,7 +17,7 @@ export const useProtectedRoute = () => {
 
     if (
       Platform.OS !== 'web' &&
-      (mainSegment === 'admin' || mainSegment === 'superadmin' || mainSegment === 'admin-souadmin')
+      (mainSegment === 'admin' || mainSegment === 'superadmin' || mainSegment === 'souadmin')
     ) {
       router.replace('/auth/role-select');
       return;

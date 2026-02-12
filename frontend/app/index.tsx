@@ -4,19 +4,32 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../src/store/authStore';
 import { Colors } from '../src/constants/colors';
 import { useProtectedRoute } from '../src/components/ProtectedRoute';
+import { API_URL } from '../src/services/api';
 
 export default function Index() {
   useProtectedRoute();
   const router = useRouter();
   const { isAuthenticated, user, isLoading } = useAuthStore();
 
+  // Sur web, afficher la landing à la racine (http://localhost:8081)
+  if (Platform.OS === 'web') {
+    const landingBase =
+      typeof window !== 'undefined' && window.location.origin === API_URL
+        ? 'http://localhost:8000'
+        : API_URL;
+    return (
+      <View style={styles.webContainer}>
+        {React.createElement('iframe', {
+          src: `${landingBase}/landing`,
+          style: { width: '100%', height: '100%', border: 0 },
+          title: 'Landing TapTapGo',
+        })}
+      </View>
+    );
+  }
+
   useEffect(() => {
     if (isLoading) {
-      return undefined;
-    }
-
-    if (Platform.OS === 'web') {
-      router.replace('/superadmin/dashboard');
       return undefined;
     }
 
@@ -35,6 +48,9 @@ export default function Index() {
             break;
           case 'superadmin':
             router.replace('/superadmin/dashboard');
+            break;
+          case 'subadmin':
+            router.replace('/souadmin/dashboard');
             break;
           default:
             router.replace('/auth/role-select');
@@ -60,6 +76,11 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
+  webContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,

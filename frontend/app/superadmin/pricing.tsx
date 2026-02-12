@@ -18,9 +18,12 @@ export default function SuperAdminPricing() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [direct, setDirect] = useState({
-    base_fare: '0',
-    price_per_km: '0',
-    price_per_min: '0',
+    base_fare_moto: '0',
+    price_per_km_moto: '0',
+    price_per_min_moto: '0',
+    base_fare_car: '0',
+    price_per_km_car: '0',
+    price_per_min_car: '0',
     commission_rate: '0',
   });
   const [admin, setAdmin] = useState({
@@ -33,12 +36,15 @@ export default function SuperAdminPricing() {
         pricingAPI.get('direct'),
         pricingAPI.get('admin'),
       ]);
-      const d = directRes.data.pricing;
-      const a = adminRes.data.pricing;
+      const d = directRes.data.pricing || {};
+      const a = adminRes.data.pricing || {};
       setDirect({
-        base_fare: String(d.base_fare ?? 0),
-        price_per_km: String(d.price_per_km ?? 0),
-        price_per_min: String(d.price_per_min ?? 0),
+        base_fare_moto: String(d.base_fare_moto ?? d.base_fare ?? 0),
+        price_per_km_moto: String(d.price_per_km_moto ?? d.price_per_km ?? 0),
+        price_per_min_moto: String(d.price_per_min_moto ?? d.price_per_min ?? 0),
+        base_fare_car: String(d.base_fare_car ?? d.base_fare ?? 0),
+        price_per_km_car: String(d.price_per_km_car ?? d.price_per_km ?? 0),
+        price_per_min_car: String(d.price_per_min_car ?? d.price_per_min ?? 0),
         commission_rate: String(d.commission_rate ?? 0),
       });
       setAdmin({
@@ -55,27 +61,30 @@ export default function SuperAdminPricing() {
 
   const handleSave = async () => {
     if (
-      direct.base_fare === '' ||
-      direct.price_per_km === '' ||
-      direct.price_per_min === '' ||
+      direct.base_fare_moto === '' ||
+      direct.price_per_km_moto === '' ||
+      direct.price_per_min_moto === '' ||
+      direct.base_fare_car === '' ||
+      direct.price_per_km_car === '' ||
+      direct.price_per_min_car === '' ||
       direct.commission_rate === '' ||
       admin.commission_rate === ''
     ) {
-      Alert.alert('Erè', 'Tanpri ranpli tout chan yo avan ou sove.');
+      Alert.alert('Erè', 'Tanpri ranpli tout chan yo (moto + machin) avan ou sove.');
       return;
     }
     setSaving(true);
     try {
       await pricingAPI.update('direct', {
-        base_fare: parseFloat(direct.base_fare) || 0,
-        price_per_km: parseFloat(direct.price_per_km) || 0,
-        price_per_min: parseFloat(direct.price_per_min) || 0,
+        base_fare_moto: parseFloat(direct.base_fare_moto) || 0,
+        price_per_km_moto: parseFloat(direct.price_per_km_moto) || 0,
+        price_per_min_moto: parseFloat(direct.price_per_min_moto) || 0,
+        base_fare_car: parseFloat(direct.base_fare_car) || 0,
+        price_per_km_car: parseFloat(direct.price_per_km_car) || 0,
+        price_per_min_car: parseFloat(direct.price_per_min_car) || 0,
         commission_rate: parseFloat(direct.commission_rate) || 0,
       });
       await pricingAPI.update('admin', {
-        base_fare: 0,
-        price_per_km: 0,
-        price_per_min: 0,
         commission_rate: parseFloat(admin.commission_rate) || 0,
       });
       Alert.alert('Siksè', 'Pri yo mete ajou');
@@ -103,29 +112,53 @@ export default function SuperAdminPricing() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Chofè TapTapGo (dirèk)</Text>
-          <Text style={styles.label}>Pri baz</Text>
+          <Text style={styles.sectionTitle}>Chofè TapTapGo (dirèk) — Moto</Text>
+          <Text style={styles.label}>Pri baz (moto)</Text>
           <TextInput
             style={styles.input}
-            value={direct.base_fare}
-            onChangeText={(text) => setDirect({ ...direct, base_fare: text })}
+            value={direct.base_fare_moto}
+            onChangeText={(text) => setDirect({ ...direct, base_fare_moto: text })}
             keyboardType="numeric"
           />
-          <Text style={styles.label}>Pri pa km</Text>
+          <Text style={styles.label}>Pri pa km (moto)</Text>
           <TextInput
             style={styles.input}
-            value={direct.price_per_km}
-            onChangeText={(text) => setDirect({ ...direct, price_per_km: text })}
+            value={direct.price_per_km_moto}
+            onChangeText={(text) => setDirect({ ...direct, price_per_km_moto: text })}
             keyboardType="numeric"
           />
-          <Text style={styles.label}>Pri pa min</Text>
+          <Text style={styles.label}>Pri pa min (moto)</Text>
           <TextInput
             style={styles.input}
-            value={direct.price_per_min}
-            onChangeText={(text) => setDirect({ ...direct, price_per_min: text })}
+            value={direct.price_per_min_moto}
+            onChangeText={(text) => setDirect({ ...direct, price_per_min_moto: text })}
             keyboardType="numeric"
           />
-          <Text style={styles.label}>Pousantaj</Text>
+
+          <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Chofè TapTapGo (dirèk) — Machin</Text>
+          <Text style={styles.label}>Pri baz (machin)</Text>
+          <TextInput
+            style={styles.input}
+            value={direct.base_fare_car}
+            onChangeText={(text) => setDirect({ ...direct, base_fare_car: text })}
+            keyboardType="numeric"
+          />
+          <Text style={styles.label}>Pri pa km (machin)</Text>
+          <TextInput
+            style={styles.input}
+            value={direct.price_per_km_car}
+            onChangeText={(text) => setDirect({ ...direct, price_per_km_car: text })}
+            keyboardType="numeric"
+          />
+          <Text style={styles.label}>Pri pa min (machin)</Text>
+          <TextInput
+            style={styles.input}
+            value={direct.price_per_min_car}
+            onChangeText={(text) => setDirect({ ...direct, price_per_min_car: text })}
+            keyboardType="numeric"
+          />
+
+          <Text style={[styles.label, { marginTop: 12 }]}>Pousantaj</Text>
           <View style={styles.percentRow}>
             <Text style={styles.percentSymbol}>%</Text>
             <TextInput

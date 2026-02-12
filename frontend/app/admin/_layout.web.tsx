@@ -45,7 +45,7 @@ export default function AdminLayout() {
       return;
     }
     if (user?.user_type !== 'subadmin') return;
-    router.replace('/admin-souadmin/dashboard');
+    router.replace('/souadmin/dashboard');
   }, [isAuthenticated, isLoading, pathname, router, user]);
 
   return (

@@ -70,7 +70,7 @@ export default function Login() {
             router.replace('/admin/dashboard');
             break;
           case 'subadmin':
-            router.replace('/admin-souadmin/dashboard');
+            router.replace('/souadmin/dashboard');
             break;
           case 'superadmin':
             router.replace('/superadmin/dashboard');

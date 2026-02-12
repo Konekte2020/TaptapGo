@@ -1,12 +1,15 @@
 import React, { useEffect } from 'react';
 import { Slot, usePathname, useRouter } from 'expo-router';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Linking } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
 
+const SITE_URL = 'https://taptapgoht.com';
+
 const MENU_ITEMS = [
   { label: 'Dashboard', href: '/superadmin/dashboard', path: '/superadmin/dashboard', icon: 'grid' },
+  { label: 'Gere Sit', href: '/superadmin/landing', path: '/superadmin/landing', icon: 'globe' },
   { label: 'Mak Pèsonèl', href: '/superadmin/white-label', path: '/superadmin/white-label', icon: 'color-palette' },
   { label: 'Administratè', href: '/superadmin/admins', path: '/superadmin/admins', icon: 'people' },
   { label: 'Chofè', href: '/superadmin/drivers', path: '/superadmin/drivers', icon: 'car' },
@@ -62,6 +65,14 @@ export default function SuperAdminLayout() {
               </Pressable>
             );
           })}
+          <Pressable
+            onPress={() => Linking.openURL(SITE_URL)}
+            style={[styles.menuItem, styles.menuItemSit]}
+            accessibilityRole="link"
+          >
+            <Ionicons name="home-outline" size={18} color={Colors.textSecondary} />
+            <Text style={styles.menuLabel}>Sit Lakay</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -114,6 +125,12 @@ const styles = StyleSheet.create({
   },
   menu: {
     gap: 6,
+  },
+  menuItemSit: {
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 12,
   },
   menuItem: {
     flexDirection: 'row',

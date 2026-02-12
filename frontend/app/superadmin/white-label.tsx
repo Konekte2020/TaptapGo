@@ -20,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { adminAPI, API_URL, buildAPI } from '../../src/services/api';
+import { useAuthStore } from '../../src/store/authStore';
 import {
   DEPARTMENT_CITIES,
   HAITI_DEPARTMENTS,
@@ -30,6 +31,8 @@ import {
 } from '../../src/constants/haiti';
 
 export default function SuperAdminWhiteLabel() {
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.user_type === 'superadmin';
   const phonePrefix = '+509 ';
   const [brands, setBrands] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +69,18 @@ export default function SuperAdminWhiteLabel() {
     message?: string;
     apk_url?: string;
     error?: string;
+    eas_build_id?: string;
+    submit_status?: string;
+    submit_track?: string;
   } | null>(null);
   const [buildHistory, setBuildHistory] = useState<any[]>([]);
   const [buildModalVisible, setBuildModalVisible] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [relaunchingBuild, setRelaunchingBuild] = useState(false);
   const [clearingFailed, setClearingFailed] = useState(false);
+  const [cancellingBuild, setCancellingBuild] = useState(false);
+  const [submittingToStore, setSubmittingToStore] = useState(false);
+  const [submitTrack, setSubmitTrack] = useState<'internal' | 'alpha' | 'beta' | 'production'>('internal');
   const [timeline, setTimeline] = useState([
     { key: 'brief', label: 'Brief & planifikasyon', status: 'an preparasyon', date: '—' },
     { key: 'design', label: 'Design & branding', status: 'an preparasyon', date: '—' },
@@ -357,7 +366,7 @@ export default function SuperAdminWhiteLabel() {
       setEditingBrand(null);
       fetchBrands();
     } catch (error: any) {
-      const message = error.response?.data?.detail || 'Pa kapab kreye mak la';
+      const message = getErrorMessage(error, 'Pa kapab kreye mak la');
       setCreateError(message);
       Alert.alert('Erè', message);
     } finally {
@@ -471,6 +480,16 @@ export default function SuperAdminWhiteLabel() {
     }
   };
 
+  const getErrorMessage = (error: any, fallback: string): string => {
+    const detail = error?.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0];
+      return typeof first === 'object' && first?.msg ? first.msg : String(first);
+    }
+    return error?.response?.data?.message || error?.message || fallback;
+  };
+
   const handleClearBuildCache = async () => {
     if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
       Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou netwaye cache la.');
@@ -487,10 +506,13 @@ export default function SuperAdminWhiteLabel() {
           onPress: async () => {
             try {
               setClearingCache(true);
-              await buildAPI.clearBuildCache();
-              Alert.alert('Siksè', 'Cache build la netwaye.');
+              const res = await buildAPI.clearBuildCache();
+              const msg = res?.data?.removed?.length
+                ? `Cache build la netwaye. ${res.data.removed.length} eleman efase.`
+                : 'Cache build la netwaye.';
+              Alert.alert('Siksè', msg);
             } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Netwayaj echwe');
+              Alert.alert('Erè', getErrorMessage(error, 'Netwayaj echwe'));
             } finally {
               setClearingCache(false);
             }
@@ -522,10 +544,75 @@ export default function SuperAdminWhiteLabel() {
               setRelaunchingBuild(true);
               await buildAPI.clearBuildCache();
               await handleGenerateAPK(true);
+              Alert.alert('Siksè', 'Cache netwaye epi nouvo build lanse.');
             } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Relansman echwe');
+              Alert.alert('Erè', getErrorMessage(error, 'Relansman echwe'));
             } finally {
               setRelaunchingBuild(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleCancelBuild = async () => {
+    if (!currentBuild?.id) return;
+    if (!['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) return;
+    Alert.alert(
+      'Anile build',
+      'Ou vle anile build k ap mache la?',
+      [
+        { text: 'Non', style: 'cancel' },
+        {
+          text: 'Wi, anile',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setCancellingBuild(true);
+              await buildAPI.cancelBuild(currentBuild.id);
+              const res = await buildAPI.getBuildStatus(currentBuild.id);
+              setCurrentBuild(res.data?.build ?? currentBuild);
+              Alert.alert('Siksè', 'Demann anilasyon voye. Build la ap sispann byento.');
+            } catch (error: any) {
+              Alert.alert('Erè', getErrorMessage(error, 'Pa kapab anile build la'));
+            } finally {
+              setCancellingBuild(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSubmitToPlayStore = async () => {
+    if (!currentBuild?.id) return;
+    if (!currentBuild?.eas_build_id) {
+      Alert.alert(
+        'Enfòmasyon',
+        'Se build cloud (Build rapid) ki ka soumèt nan Play Store. Lance yon "Build rapid" pou mak la, tann li fini, epi klike "Soumèt Play Store".'
+      );
+      return;
+    }
+    Alert.alert(
+      'Soumèt nan Play Store',
+      `Sa ap voye build la nan track "${submitTrack}". Ou vle kontinye?`,
+      [
+        { text: 'Anile', style: 'cancel' },
+        {
+          text: 'Wi, soumèt',
+          onPress: async () => {
+            try {
+              setSubmittingToStore(true);
+              await buildAPI.submitToPlayStore(currentBuild.id, submitTrack);
+              const res = await buildAPI.getBuildStatus(currentBuild.id);
+              setCurrentBuild(res.data?.build ?? currentBuild);
+              Alert.alert('Siksè', `Build soumèt nan Play Store (track: ${submitTrack}).`);
+              updateTimelineStatus([{ key: 'store', status: 'soumèt' }]);
+            } catch (error: any) {
+              Alert.alert('Erè', getErrorMessage(error, 'Soumèt echwe'));
+            } finally {
+              setSubmittingToStore(false);
             }
           },
         },
@@ -1254,34 +1341,38 @@ export default function SuperAdminWhiteLabel() {
                   <Ionicons name="construct" size={16} color="white" />
                   <Text style={styles.deliveryText}>{saving ? 'Ap lanse...' : 'Jenere APK'}</Text>
                 </Pressable>
-                <Pressable
-                  style={[
-                    styles.deliveryButton,
-                    styles.deliveryButtonSecondary,
-                    (clearingCache || relaunchingBuild) && styles.buttonDisabled,
-                  ]}
-                  disabled={clearingCache || relaunchingBuild}
-                  onPress={handleClearBuildCache}
-                >
-                  <Ionicons name="trash-outline" size={16} color="white" />
-                  <Text style={styles.deliveryText}>
-                    {clearingCache ? 'Ap netwaye...' : 'Netwaye build cache'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    styles.deliveryButton,
-                    styles.deliveryButtonSecondary,
-                    (relaunchingBuild || saving) && styles.buttonDisabled,
-                  ]}
-                  disabled={relaunchingBuild || saving}
-                  onPress={handleClearAndRelaunch}
-                >
-                  <Ionicons name="refresh" size={16} color="white" />
-                  <Text style={styles.deliveryText}>
-                    {relaunchingBuild ? 'Ap relanse...' : 'Netwaye + relanse'}
-                  </Text>
-                </Pressable>
+                {isSuperAdmin && (
+                  <>
+                    <Pressable
+                      style={[
+                        styles.deliveryButton,
+                        styles.deliveryButtonSecondary,
+                        (clearingCache || relaunchingBuild) && styles.buttonDisabled,
+                      ]}
+                      disabled={clearingCache || relaunchingBuild}
+                      onPress={handleClearBuildCache}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="white" />
+                      <Text style={styles.deliveryText}>
+                        {clearingCache ? 'Ap netwaye...' : 'Netwaye build cache'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.deliveryButton,
+                        styles.deliveryButtonSecondary,
+                        (!createdBrandName || relaunchingBuild || saving) && styles.buttonDisabled,
+                      ]}
+                      disabled={!createdBrandName || relaunchingBuild || saving}
+                      onPress={handleClearAndRelaunch}
+                    >
+                      <Ionicons name="refresh" size={16} color="white" />
+                      <Text style={styles.deliveryText}>
+                        {relaunchingBuild ? 'Ap relanse...' : 'Netwaye + relanse'}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
                 <Pressable
                   style={[
                     styles.deliveryButton,
@@ -1351,24 +1442,74 @@ export default function SuperAdminWhiteLabel() {
                   )}
                 </View>
 
-                {currentBuild.status === 'success' && (
-                  <View style={styles.buildActionsRow}>
-                    <Pressable style={styles.downloadButton} onPress={() => handleDownloadAPK()}>
-                      <Ionicons name="download" size={16} color="white" />
-                      <Text style={styles.downloadButtonText}>Telechaje APK</Text>
-                    </Pressable>
+                {(currentBuild.status === 'queued' || currentBuild.status === 'building') && (
+                  <View style={[styles.buildActionsRow, { marginTop: 8 }]}>
                     <Pressable
-                      style={styles.shareButton}
-                      onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                      style={[styles.cancelButton, cancellingBuild && styles.buttonDisabled]}
+                      disabled={cancellingBuild}
+                      onPress={handleCancelBuild}
                     >
-                      <Ionicons name="copy-outline" size={16} color="white" />
-                      <Text style={styles.shareButtonText}>Kopye lyen</Text>
-                    </Pressable>
-                    <Pressable style={styles.openButton} onPress={() => handleDownloadAPK(true)}>
-                      <Ionicons name="open-outline" size={16} color="white" />
-                      <Text style={styles.shareButtonText}>Ouvri APK</Text>
+                      <Ionicons name="stop-circle-outline" size={16} color="white" />
+                      <Text style={styles.cancelButtonText}>
+                        {cancellingBuild ? 'Ap anile...' : 'Anile build'}
+                      </Text>
                     </Pressable>
                   </View>
+                )}
+
+                {currentBuild.status === 'success' && (
+                  <>
+                    <View style={styles.buildActionsRow}>
+                      <Pressable style={styles.downloadButton} onPress={() => handleDownloadAPK()}>
+                        <Ionicons name="download" size={16} color="white" />
+                        <Text style={styles.downloadButtonText}>Telechaje APK</Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.shareButton}
+                        onPress={() => handleCopyLink(getApkUrl(currentBuild.apk_url))}
+                      >
+                        <Ionicons name="copy-outline" size={16} color="white" />
+                        <Text style={styles.shareButtonText}>Kopye lyen</Text>
+                      </Pressable>
+                      <Pressable style={styles.openButton} onPress={() => handleDownloadAPK(true)}>
+                        <Ionicons name="open-outline" size={16} color="white" />
+                        <Text style={styles.shareButtonText}>Ouvri APK</Text>
+                      </Pressable>
+                    </View>
+                    {currentBuild.eas_build_id && (
+                      <View style={[styles.buildActionsRow, { marginTop: 8 }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <Text style={styles.buildMessage}>Track:</Text>
+                          {(['internal', 'alpha', 'beta', 'production'] as const).map((t) => (
+                            <Pressable
+                              key={t}
+                              onPress={() => setSubmitTrack(t)}
+                              style={[
+                                { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: submitTrack === t ? Colors.primary : Colors.surface, borderWidth: 1, borderColor: Colors.border },
+                              ]}
+                            >
+                              <Text style={{ fontSize: 12, color: submitTrack === t ? 'white' : Colors.text }}>{t}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        <Pressable
+                          style={[styles.downloadButton, submittingToStore && styles.buttonDisabled]}
+                          disabled={submittingToStore}
+                          onPress={handleSubmitToPlayStore}
+                        >
+                          <Ionicons name="storefront-outline" size={16} color="white" />
+                          <Text style={styles.downloadButtonText}>
+                            {submittingToStore ? 'Ap soumèt...' : 'Soumèt Play Store'}
+                          </Text>
+                        </Pressable>
+                        {currentBuild.submit_status === 'submitted' && currentBuild.submit_track && (
+                          <Text style={[styles.buildMessage, { color: Colors.success }]}>
+                            ✓ Soumèt nan {currentBuild.submit_track}
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </>
                 )}
 
                 {currentBuild.status !== 'success' && !!currentBuild.apk_url && (
@@ -1664,13 +1805,48 @@ export default function SuperAdminWhiteLabel() {
                       </Pressable>
                     </View>
 
+                    {currentBuild.eas_build_id && (
+                      <View style={[styles.buildActionsRow, { marginTop: 12 }]}>
+                        <Text style={styles.buildDetailLabel}>Track Play Store: </Text>
+                        {(['internal', 'alpha', 'beta', 'production'] as const).map((t) => (
+                          <Pressable
+                            key={t}
+                            onPress={() => setSubmitTrack(t)}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 8,
+                              backgroundColor: submitTrack === t ? Colors.primary : Colors.surface,
+                              borderWidth: 1,
+                              borderColor: Colors.border,
+                            }}
+                          >
+                            <Text style={{ fontSize: 12, color: submitTrack === t ? 'white' : Colors.text }}>{t}</Text>
+                          </Pressable>
+                        ))}
+                        <Pressable
+                          style={[styles.downloadButtonLarge, submittingToStore && styles.buttonDisabled]}
+                          disabled={submittingToStore}
+                          onPress={handleSubmitToPlayStore}
+                        >
+                          <Ionicons name="storefront-outline" size={20} color="white" />
+                          <Text style={styles.downloadButtonTextLarge}>
+                            {submittingToStore ? 'Ap soumèt...' : 'Soumèt Play Store'}
+                          </Text>
+                        </Pressable>
+                        {currentBuild.submit_status === 'submitted' && currentBuild.submit_track && (
+                          <Text style={[styles.buildDetailValue, { color: Colors.success }]}>
+                            ✓ Soumèt nan {currentBuild.submit_track}
+                          </Text>
+                        )}
+                      </View>
+                    )}
                     <View style={styles.buildInstructions}>
                       <Text style={styles.buildInstructionsTitle}>Pwochen etap:</Text>
                       <Text style={styles.buildInstructionsText}>
-                        1. Telechaje APK la{'\n'}
-                        2. Transfere li nan yon telefòn Android{'\n'}
-                        3. Enstale li epi teste aplikasyon an{'\n'}
-                        4. Si tout bagay bon, ou ka pibliye li sou Play Store
+                        {currentBuild.eas_build_id
+                          ? '1. Ou ka "Soumèt Play Store" pou voye build la nan Google Play.\n2. Oswa telechaje APK la epi teste anvan.'
+                          : '1. Telechaje APK la\n2. Transfere li nan yon telefòn Android\n3. Enstale li epi teste aplikasyon an\n4. Si tout bagay bon, ou ka pibliye li sou Play Store'}
                       </Text>
                     </View>
                   </>

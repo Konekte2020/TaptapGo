@@ -40,6 +40,15 @@ export default function SuperAdminLayout() {
         }}
       />
       <Tabs.Screen
+        name="landing"
+        options={{
+          title: 'Gere Sit',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="globe" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="white-label"
         options={{
           title: 'White Label',

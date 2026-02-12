@@ -1,13 +1,9 @@
 {
-  "cli": {
-    "version": ">= 8.0.0"
-  },
+  "cli": { "version": ">= 8.0.0" },
   "build": {
     "preview": {
       "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      },
+      "android": { "buildType": "apk" },
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "REPLACE_ME",
         "EXPO_PUBLIC_BACKEND_URL_ANDROID": "REPLACE_ME",
@@ -17,15 +13,21 @@
       }
     },
     "production": {
-      "android": {
-        "buildType": "app-bundle"
-      },
+      "distribution": "store",
+      "android": { "buildType": "app-bundle" },
       "env": {
         "EXPO_PUBLIC_BACKEND_URL": "REPLACE_ME",
         "EXPO_PUBLIC_BACKEND_URL_ANDROID": "REPLACE_ME",
         "EXPO_PUBLIC_MAPBOX_TOKEN": "REPLACE_ME",
         "EXPO_PUBLIC_BRAND_ID": "REPLACE_ME",
         "EXPO_PUBLIC_BRAND_NAME": "REPLACE_ME"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal"
       }
     }
   }

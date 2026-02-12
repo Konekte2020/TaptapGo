@@ -6,12 +6,12 @@ import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
 
 const MENU_ITEMS = [
-  { label: 'Dashboard', href: '/admin-souadmin/dashboard', path: '/admin-souadmin/dashboard', icon: 'grid' },
-  { label: 'Chofè', href: '/admin-souadmin/drivers', path: '/admin-souadmin/drivers', icon: 'car' },
-  { label: 'Pasajè', href: '/admin-souadmin/passengers', path: '/admin-souadmin/passengers', icon: 'people' },
-  { label: 'Plent', href: '/admin-souadmin/complaints', path: '/admin-souadmin/complaints', icon: 'alert-circle' },
-  { label: 'Notifikasyon', href: '/admin-souadmin/notifications', path: '/admin-souadmin/notifications', icon: 'notifications' },
-  { label: 'Profil', href: '/admin-souadmin/profile', path: '/admin-souadmin/profile', icon: 'person' },
+  { label: 'Dashboard', href: '/souadmin/dashboard', path: '/souadmin/dashboard', icon: 'grid' },
+  { label: 'Chofè', href: '/souadmin/drivers', path: '/souadmin/drivers', icon: 'car' },
+  { label: 'Pasajè', href: '/souadmin/passengers', path: '/souadmin/passengers', icon: 'people' },
+  { label: 'Plent', href: '/souadmin/complaints', path: '/souadmin/complaints', icon: 'alert-circle' },
+  { label: 'Notifikasyon', href: '/souadmin/notifications', path: '/souadmin/notifications', icon: 'notifications' },
+  { label: 'Profil', href: '/souadmin/profile', path: '/souadmin/profile', icon: 'person' },
 ];
 
 export default function AdminSouAdminLayout() {
@@ -30,11 +30,11 @@ export default function AdminSouAdminLayout() {
   }, [isAuthenticated, isLoading, router, user]);
 
   const pageTitle =
-    pathname?.includes('/admin-souadmin/drivers') ? 'Chofè' :
-    pathname?.includes('/admin-souadmin/passengers') ? 'Pasajè' :
-    pathname?.includes('/admin-souadmin/complaints') ? 'Plent' :
-    pathname?.includes('/admin-souadmin/notifications') ? 'Notifikasyon' :
-    pathname?.includes('/admin-souadmin/profile') ? 'Profil' :
+    pathname?.includes('/souadmin/drivers') ? 'Chofè' :
+    pathname?.includes('/souadmin/passengers') ? 'Pasajè' :
+    pathname?.includes('/souadmin/complaints') ? 'Plent' :
+    pathname?.includes('/souadmin/notifications') ? 'Notifikasyon' :
+    pathname?.includes('/souadmin/profile') ? 'Profil' :
     'Dashboard';
 
   return (

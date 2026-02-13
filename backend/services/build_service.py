@@ -38,8 +38,13 @@ def _resolve_build_dir() -> Path:
 BUILD_DIR = _resolve_build_dir()
 
 
+# Dossiers à ne JAMAIS supprimer (cache Gradle, etc.)
+_CLEAN_EXCLUDE = frozenset({"gradle"})
+
+
 def _clean_stale_work_dirs(keep_key: Optional[str] = None, max_age_seconds: int = 3600) -> int:
-    """Supprime les anciens dossiers de travail sous BUILD_DIR (nettoyage propre)."""
+    """Supprime les anciens dossiers de travail sous BUILD_DIR (nettoyage propre).
+    Exclut le cache Gradle pour éviter FileNotFoundException sur metadata.bin."""
     if not BUILD_DIR.exists():
         return 0
     removed = 0
@@ -47,6 +52,8 @@ def _clean_stale_work_dirs(keep_key: Optional[str] = None, max_age_seconds: int 
         now = time.time()
         for path in list(BUILD_DIR.iterdir()):
             if not path.is_dir():
+                continue
+            if path.name in _CLEAN_EXCLUDE:
                 continue
             if keep_key and path.name == keep_key:
                 continue
@@ -237,21 +244,19 @@ class BuildService:
                 ignore_dangling_symlinks=True,
             )
             app_dir = copy_target_dir
-            if os.name == "nt":
+            # Ne pas utiliser SUBST sur Windows : React Native codegen echwe ak "different roots"
+            # (Z:\ vs C:\) lè Gradle tcheke chemen relatif ant node_modules.
+            # C:\tb\xxx\a se kout ase pou evite MAX_PATH.
+            subst_drive = None
+            if os.name == "nt" and os.getenv("TAPTAPGO_USE_SUBST", "").lower() in ("1", "true", "yes"):
                 subst_drive = self._create_subst_drive(work_dir)
                 if subst_drive:
                     app_dir = Path(f"{subst_drive}:\\") / "a"
                     logger.info(f"Using SUBST drive: {subst_drive}:")
                 else:
-                    # Pas de blocage: on continue avec le chemin normal (C:\tb\xxx\a)
-                    logger.info("SUBST pa disponib, ap kontinye ak chemen nòmal")
-                    self._update_progress(
-                        build_id,
-                        "building",
-                        12,
-                        "Ap kontinye san SUBST. Si erè chemen, mete TAPTAPGO_ALLOW_LONG_PATHS=1.",
-                    )
-                    app_dir = copy_target_dir
+                    subst_drive = None
+            if subst_drive is None:
+                logger.info("Ap kontinye san SUBST (evite erè codegen Z: vs C:)")
 
             self._update_progress(build_id, "building", 20, "Pesonalizasyon app.json...")
 
@@ -404,7 +409,12 @@ class BuildService:
             app_json = json.load(f)
 
         company_slug = config["company_name"].replace(" ", "-").lower()
-        package_name = config["company_name"].replace(" ", "").replace("-", "").lower()
+        # Sanitize pour package Android (lettres, chiffres uniquement)
+        pkg_base = "".join(c for c in config["company_name"] if c.isalnum()).lower() or "app"
+        # Unicité: ajouter 6 premiers caractères du brand_id pour éviter collisions
+        brand_id = str(config.get("brand_id", ""))
+        short_id = "".join(c for c in brand_id if c.isalnum())[:6] if brand_id else str(uuid.uuid4())[:6]
+        package_name = f"{pkg_base}_{short_id}" if short_id else pkg_base
 
         # Personnaliser les métadonnées
         app_json["expo"]["name"] = config["company_name"]
@@ -418,16 +428,30 @@ class BuildService:
         app_json["expo"]["android"]["versionCode"] = 1
 
         # Logo
+        logo_path = "./assets/logo.png"
         if config.get("logo"):
-            app_json["expo"]["icon"] = "./assets/logo.png"
+            app_json["expo"]["icon"] = logo_path
 
             if "adaptiveIcon" not in app_json["expo"]["android"]:
                 app_json["expo"]["android"]["adaptiveIcon"] = {}
 
-            app_json["expo"]["android"]["adaptiveIcon"]["foregroundImage"] = "./assets/logo.png"
+            app_json["expo"]["android"]["adaptiveIcon"]["foregroundImage"] = logo_path
             app_json["expo"]["android"]["adaptiveIcon"]["backgroundColor"] = config.get(
                 "primary_color", "#FFFFFF"
             )
+
+            # Mise à jour du splash screen (expo-splash-screen) pour éviter erreur image manquante
+            plugins = app_json.get("expo", {}).get("plugins", [])
+            for i, p in enumerate(plugins):
+                if isinstance(p, (list, tuple)) and len(p) >= 2 and p[0] == "expo-splash-screen":
+                    opts = dict(p[1]) if isinstance(p[1], dict) else {}
+                    opts["image"] = logo_path
+                    opts["backgroundColor"] = config.get("primary_color", "#FFFFFF")
+                    plugins[i] = ["expo-splash-screen", opts]
+                    break
+
+            if "web" in app_json.get("expo", {}):
+                app_json["expo"]["web"]["favicon"] = logo_path
 
         # Version
         app_json["expo"]["version"] = "1.0.0"
@@ -659,9 +683,12 @@ export const Shadows = {{
             log_path = BUILD_LOG_DIR / f"{build_id}-gradle.log"
             env = os.environ.copy()
             if os.name == "nt":
-                gradle_home = BUILD_DIR / "gradle"
-                gradle_home.mkdir(exist_ok=True)
-                env["GRADLE_USER_HOME"] = str(gradle_home)
+                # Utiliser le cache Gradle par defaut (%USERPROFILE%\.gradle) au lieu de C:\tb\gradle
+                # pour eviter metadata.bin corrompu (C:\tb\gradle se korompi ant builds)
+                custom_gradle = os.getenv("TAPTAPGO_GRADLE_HOME")
+                if custom_gradle:
+                    env["GRADLE_USER_HOME"] = custom_gradle
+                # else: ne pas setter GRADLE_USER_HOME -> Gradle utilise %USERPROFILE%\.gradle
                 env["TMP"] = str(BUILD_DIR)
                 env["TEMP"] = str(BUILD_DIR)
             logger.info(f"Gradle command: {' '.join(gradle_cmd)}")

@@ -172,6 +172,13 @@ export default function SuperAdminWhiteLabel() {
         return hasBrandName || hasBrandAssets;
       });
       setBrands(filtered);
+
+      // Si aucune marque sélectionnée mais qu'il existe des marques avec logo, sélectionner la première
+      setCreatedBrandName((prev) => {
+        if (prev) return prev;
+        const withLogo = filtered.find((b: any) => b.logo);
+        return withLogo ? (withLogo.brand_name || '') : '';
+      });
     } catch (error) {
       console.error('Fetch white label error:', error);
     } finally {
@@ -490,70 +497,77 @@ export default function SuperAdminWhiteLabel() {
     return error?.response?.data?.message || error?.message || fallback;
   };
 
-  const handleClearBuildCache = async () => {
-    if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
-      Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou netwaye cache la.');
-      return;
+  const executeClearBuildCache = async () => {
+    try {
+      setClearingCache(true);
+      const res = await buildAPI.clearBuildCache();
+      const msg = res?.data?.removed?.length
+        ? `Cache build la netwaye. ${res.data.removed.length} eleman efase.`
+        : 'Cache build la netwaye.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Siksè', msg);
+    } catch (error: any) {
+      const errMsg = getErrorMessage(error, 'Netwayaj echwe');
+      if (Platform.OS === 'web') window.alert(`Erè: ${errMsg}`);
+      else Alert.alert('Erè', errMsg);
+    } finally {
+      setClearingCache(false);
     }
-    Alert.alert(
-      'Netwaye cache build',
-      'Sa ap efase dosye tanporè yo ak log build yo. Ou vle kontinye?',
-      [
-        { text: 'Anile', style: 'cancel' },
-        {
-          text: 'Wi, netwaye',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setClearingCache(true);
-              const res = await buildAPI.clearBuildCache();
-              const msg = res?.data?.removed?.length
-                ? `Cache build la netwaye. ${res.data.removed.length} eleman efase.`
-                : 'Cache build la netwaye.';
-              Alert.alert('Siksè', msg);
-            } catch (error: any) {
-              Alert.alert('Erè', getErrorMessage(error, 'Netwayaj echwe'));
-            } finally {
-              setClearingCache(false);
-            }
-          },
-        },
-      ]
-    );
   };
 
-  const handleClearAndRelaunch = async () => {
+  const handleClearBuildCache = () => {
     if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
-      Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou relanse.');
+      if (Platform.OS === 'web') window.alert('Gen yon build k ap mache. Tanpri tann li fini avan ou netwaye cache la.');
+      else Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou netwaye cache la.');
+      return;
+    }
+    const message = 'Sa ap efase dosye tanporè yo ak log build yo. Ou vle kontinye?';
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(message)) executeClearBuildCache();
+    } else {
+      Alert.alert('Netwaye cache build', message, [
+        { text: 'Anile', style: 'cancel' },
+        { text: 'Wi, netwaye', style: 'destructive', onPress: executeClearBuildCache },
+      ]);
+    }
+  };
+
+  const executeClearAndRelaunch = async () => {
+    try {
+      setRelaunchingBuild(true);
+      await buildAPI.clearBuildCache();
+      await handleGenerateAPK(true);
+      if (Platform.OS === 'web') window.alert('Cache netwaye epi nouvo build lanse.');
+      else Alert.alert('Siksè', 'Cache netwaye epi nouvo build lanse.');
+    } catch (error: any) {
+      const errMsg = getErrorMessage(error, 'Relansman echwe');
+      if (Platform.OS === 'web') window.alert(`Erè: ${errMsg}`);
+      else Alert.alert('Erè', errMsg);
+    } finally {
+      setRelaunchingBuild(false);
+    }
+  };
+
+  const handleClearAndRelaunch = () => {
+    if (currentBuild && ['queued', 'building', 'running', 'processing'].includes(String(currentBuild.status))) {
+      if (Platform.OS === 'web') window.alert('Gen yon build k ap mache. Tanpri tann li fini avan ou relanse.');
+      else Alert.alert('Atansyon', 'Gen yon build k ap mache. Tanpri tann li fini avan ou relanse.');
       return;
     }
     if (!createdBrandName) {
-      Alert.alert('Erè', 'Tanpri kreye mak la avan ou relanse build la.');
+      if (Platform.OS === 'web') window.alert('Tanpri kreye mak la avan ou relanse build la.');
+      else Alert.alert('Erè', 'Tanpri kreye mak la avan ou relanse build la.');
       return;
     }
-    Alert.alert(
-      'Netwaye + relanse',
-      'Sa ap efase cache build la epi lanse yon nouvo build. Ou vle kontinye?',
-      [
+    const message = 'Sa ap efase cache build la epi lanse yon nouvo build. Ou vle kontinye?';
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(message)) executeClearAndRelaunch();
+    } else {
+      Alert.alert('Netwaye + relanse', message, [
         { text: 'Anile', style: 'cancel' },
-        {
-          text: 'Wi, kontinye',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setRelaunchingBuild(true);
-              await buildAPI.clearBuildCache();
-              await handleGenerateAPK(true);
-              Alert.alert('Siksè', 'Cache netwaye epi nouvo build lanse.');
-            } catch (error: any) {
-              Alert.alert('Erè', getErrorMessage(error, 'Relansman echwe'));
-            } finally {
-              setRelaunchingBuild(false);
-            }
-          },
-        },
-      ]
-    );
+        { text: 'Wi, kontinye', style: 'destructive', onPress: executeClearAndRelaunch },
+      ]);
+    }
   };
 
   const handleCancelBuild = async () => {
@@ -620,30 +634,40 @@ export default function SuperAdminWhiteLabel() {
     );
   };
 
-  const handleClearFailedBuilds = async () => {
-    Alert.alert(
-      'Efase build echwe yo',
-      'Sa ap efase tout build ki echwe yo nan list istorik la. Ou vle kontinye?',
-      [
+  const executeClearFailedBuilds = async () => {
+    try {
+      setClearingFailed(true);
+      await buildAPI.clearFailedBuilds();
+      await fetchBuildHistory();
+      if (Platform.OS === 'web') {
+        window.alert('Build echwe yo efase.');
+      } else {
+        Alert.alert('Siksè', 'Build echwe yo efase.');
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.detail || 'Efase echwe';
+      if (Platform.OS === 'web') {
+        window.alert(`Erè: ${msg}`);
+      } else {
+        Alert.alert('Erè', msg);
+      }
+    } finally {
+      setClearingFailed(false);
+    }
+  };
+
+  const handleClearFailedBuilds = () => {
+    const message = 'Sa ap efase tout build ki echwe yo nan list istorik la. Ou vle kontinye?';
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(message)) {
+        executeClearFailedBuilds();
+      }
+    } else {
+      Alert.alert('Efase build echwe yo', message, [
         { text: 'Anile', style: 'cancel' },
-        {
-          text: 'Wi, efase',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setClearingFailed(true);
-              await buildAPI.clearFailedBuilds();
-              await fetchBuildHistory();
-              Alert.alert('Siksè', 'Build echwe yo efase.');
-            } catch (error: any) {
-              Alert.alert('Erè', error.response?.data?.detail || 'Efase echwe');
-            } finally {
-              setClearingFailed(false);
-            }
-          },
-        },
-      ]
-    );
+        { text: 'Wi, efase', style: 'destructive', onPress: executeClearFailedBuilds },
+      ]);
+    }
   };
 
   const getApkUrl = (apkUrl?: string) => {
@@ -735,6 +759,7 @@ export default function SuperAdminWhiteLabel() {
     const city = normalizeHaitiCity(rawCity);
     const dept = city ? getDepartmentForCity(city) : normalizeHaitiDepartment(brand?.department || '');
     setEditingBrand(brand);
+    setCreatedBrandName(brand.brand_name || '');
     setForm({
       companyName: brand.brand_name || '',
       representativeName: brand.full_name || '',
@@ -927,6 +952,17 @@ export default function SuperAdminWhiteLabel() {
         <Pressable style={styles.editButton} onPress={() => handleEditBrand(item)}>
           <Ionicons name="create-outline" size={16} color={Colors.text} />
           <Text style={styles.editButtonText}>Modifye</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.editButton, (!item.logo || saving) && styles.buttonDisabled]}
+          disabled={!item.logo || saving}
+          onPress={() => {
+            setCreatedBrandName(item.brand_name || '');
+            handleGenerateAPK();
+          }}
+        >
+          <Ionicons name="construct-outline" size={16} color={Colors.primary} />
+          <Text style={[styles.editButtonText, { color: Colors.primary }]}>Jenere APK</Text>
         </Pressable>
         <Pressable style={styles.previewActionButton} onPress={() => handlePreviewBrand(item)}>
           <Ionicons name="eye" size={16} color={Colors.text} />
@@ -1327,6 +1363,7 @@ export default function SuperAdminWhiteLabel() {
               <Text style={styles.sectionTitle}>Jenere APK</Text>
               <Text style={styles.sectionHint}>
                 Klike sou bouton an pou jenere APK aplikasyon an pou kliyan an.
+                {createdBrandName ? ` Mak chwazi: ${createdBrandName}` : ''}
               </Text>
               <View style={styles.deliveryRow}>
                 <Pressable

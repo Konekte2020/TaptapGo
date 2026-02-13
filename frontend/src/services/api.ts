@@ -381,7 +381,8 @@ export const buildAPI = {
 
   clearBuildCache: () => api.post('/superadmin/builds/cache/clear'),
   cancelBuild: (buildId: string) => api.post(`/superadmin/builds/${buildId}/cancel`),
-  clearFailedBuilds: (brandId?: string) => api.delete('/superadmin/builds/failed', { params: { brand_id: brandId } }),
+  clearFailedBuilds: (brandId?: string) =>
+    api.delete('/superadmin/builds/failed', { params: brandId ? { brand_id: brandId } : {} }),
 
   submitToPlayStore: (buildId: string, track: 'internal' | 'alpha' | 'beta' | 'production' = 'internal') =>
     api.post('/superadmin/builds/submit', { build_id: buildId, track }),

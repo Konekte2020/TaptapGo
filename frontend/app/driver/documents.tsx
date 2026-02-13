@@ -18,7 +18,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/authStore';
 import { profileAPI } from '../../src/services/api';
 
-type DocumentField = 'license_photo' | 'vehicle_papers' | 'vehicle_photo';
+type DocumentField = 'license_photo' | 'vehicle_papers' | 'vehicle_photo' | 'casier_judiciaire';
 
 export default function DriverDocuments() {
   const router = useRouter();
@@ -28,12 +28,14 @@ export default function DriverDocuments() {
     license_photo: undefined,
     vehicle_papers: undefined,
     vehicle_photo: undefined,
+    casier_judiciaire: undefined,
   });
 
   const documents: Array<{ field: DocumentField; label: string; helper: string }> = [
     { field: 'license_photo', label: 'Pèmi Kondwi', helper: 'Foto lisans kondwi ou' },
     { field: 'vehicle_papers', label: 'Papye Veyikil', helper: 'Kat griz oswa papye machin' },
     { field: 'vehicle_photo', label: 'Foto Veyikil', helper: 'Foto devan oswa bò veyikil' },
+    { field: 'casier_judiciaire', label: 'Kasye Jidisyè', helper: 'Obligatwa pou pase an liy. Foto kasye jidisyè w (casier judiciaire)' },
   ];
 
   const getPreview = (field: DocumentField) => {

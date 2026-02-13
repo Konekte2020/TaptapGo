@@ -7,25 +7,60 @@ import tempfile
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import base64
 import logging
 
 logger = logging.getLogger(__name__)
 
+
+class BuildCancelledException(Exception):
+    """Build anile pa itilizatè."""
+    pass
+
+# Configuration avec timeouts augmentés (guide diagnostic)
+DEPENDENCY_TIMEOUT = 900   # 15 min
+GRADLE_TIMEOUT = 1800     # 30 min
+PREBUILD_TIMEOUT = 600    # 10 min
+
 # Configuration
 def _resolve_build_dir() -> Path:
     if os.name != "nt":
         return Path(tempfile.gettempdir()) / "taptapgo-builds"
+    # Windows: toujours un chemin court pour éviter MAX_PATH (260 car.)
     env_value = os.getenv("TAPTAPGO_BUILD_DIR", "C:\\tb")
     candidate = Path(env_value)
-    # Forcer un chemin court sur Windows pour eviter les erreurs de longueur
-    if " " in str(candidate) or len(str(candidate)) > 10:
+    if " " in str(candidate) or len(str(candidate)) > 12:
         candidate = Path("C:\\tb")
     return candidate
 
 
 BUILD_DIR = _resolve_build_dir()
+
+
+def _clean_stale_work_dirs(keep_key: Optional[str] = None, max_age_seconds: int = 3600) -> int:
+    """Supprime les anciens dossiers de travail sous BUILD_DIR (nettoyage propre)."""
+    if not BUILD_DIR.exists():
+        return 0
+    removed = 0
+    try:
+        now = time.time()
+        for path in list(BUILD_DIR.iterdir()):
+            if not path.is_dir():
+                continue
+            if keep_key and path.name == keep_key:
+                continue
+            try:
+                age = now - path.stat().st_mtime
+                if age > max_age_seconds:
+                    shutil.rmtree(path, ignore_errors=True)
+                    removed += 1
+                    logger.info(f"Netwaye ansyen dosye: {path}")
+            except OSError:
+                pass
+    except OSError as e:
+        logger.warning(f"Pa kapab netwaye BUILD_DIR: {e}")
+    return removed
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "builds"
 BUILD_LOG_DIR = OUTPUT_DIR / "logs"
 BASE_PROJECT_PATH = Path(
@@ -40,13 +75,52 @@ STORAGE_BUCKET = os.getenv("TAPTAPGO_BUILDS_BUCKET", "builds")
 class BuildService:
     def __init__(self, supabase_client):
         self.supabase = supabase_client
+        self._cancel_requested: Dict[str, bool] = {}
         BUILD_DIR.mkdir(exist_ok=True)
         OUTPUT_DIR.mkdir(exist_ok=True)
         BUILD_LOG_DIR.mkdir(exist_ok=True)
 
+    def request_cancel(self, build_id: str) -> None:
+        """Demande l'annulation d'un build en cours."""
+        self._cancel_requested[build_id] = True
+        logger.info(f"Cancel requested for build {build_id}")
+
+    def _is_cancelled(self, build_id: str) -> bool:
+        """Retourne True si annulation demandée et retire la demande."""
+        return self._cancel_requested.pop(build_id, False)
+
+    def _peek_cancelled(self, build_id: str) -> bool:
+        """Retourne True si annulation demandée, sans retirer la demande (pour le watchdog)."""
+        return self._cancel_requested.get(build_id, False)
+
+    def _check_cancelled(self, build_id: str) -> None:
+        """Lève BuildCancelledException si l'utilisateur a demandé l'annulation."""
+        if self._is_cancelled(build_id):
+            raise BuildCancelledException("Build anile pa itilizatè")
+
+    def _has_running_build(self) -> bool:
+        """Vérifie s'il existe déjà un build en cours (queued ou building)."""
+        try:
+            r = self.supabase.table("builds").select("id").or_(
+                "status.eq.queued,status.eq.building"
+            ).execute()
+            return bool(r.data and len(r.data) > 0)
+        except Exception as e:
+            logger.warning(f"Check running build: {e}")
+            return False
+
     async def create_build(self, brand_id: str, config: Dict[str, Any]) -> str:
-        """Créer un nouveau build APK"""
+        """Créer un nouveau build APK (un seul à la fois)."""
         build_id = str(uuid.uuid4())
+
+        # Un seul build à la fois
+        if self._has_running_build():
+            raise Exception(
+                "Gen yon build k ap mache. Tann li fini oswa anile li anvan ou lanse yon lòt."
+            )
+
+        # Vérifications préalables
+        self._check_prerequisites()
 
         # Créer l'enregistrement dans la DB
         try:
@@ -56,6 +130,7 @@ class BuildService:
                     "brand_id": brand_id,
                     "status": "queued",
                     "progress": 0,
+                    "message": "Build an preparasyon...",
                     "created_at": datetime.utcnow().isoformat(),
                 }
             ).execute()
@@ -75,26 +150,65 @@ class BuildService:
 
         return build_id
 
+    def _check_prerequisites(self):
+        """Vérifier les prérequis avant de lancer le build"""
+        errors = []
+        sdk_root = os.getenv("ANDROID_HOME") or os.getenv("ANDROID_SDK_ROOT")
+        if not sdk_root:
+            errors.append("ANDROID_HOME/ANDROID_SDK_ROOT pa konfigire")
+        elif not Path(sdk_root).exists():
+            errors.append(f"Android SDK pa jwenn nan {sdk_root}")
+        node = shutil.which("node") or shutil.which("node.exe")
+        if not node:
+            errors.append("Node.js pa enstale oswa pa nan PATH")
+        npm = shutil.which("npm") or shutil.which("npm.cmd")
+        if not npm:
+            errors.append("npm pa enstale oswa pa nan PATH")
+        if not BASE_PROJECT_PATH.exists():
+            errors.append(f"Pwojè debaz pa jwenn nan {BASE_PROJECT_PATH}")
+        # Windows: vérifier que le dossier de build court existe et est utilisable
+        if os.name == "nt":
+            try:
+                BUILD_DIR.mkdir(parents=True, exist_ok=True)
+                test_file = BUILD_DIR / ".write_test"
+                test_file.write_text("ok")
+                test_file.unlink()
+            except OSError as e:
+                errors.append(f"Dosye build pa kapab kreye oswa ekri nan {BUILD_DIR}: {e}")
+        if errors:
+            raise Exception("Prerequis ki manke:\n- " + "\n- ".join(errors))
+
     def _build_apk(self, build_id: str, brand_id: str, config: Dict[str, Any]):
         """Générer l'APK (exécuté en arrière-plan)"""
         work_dir: Optional[Path] = None
         subst_drive: Optional[str] = None
         try:
             logger.info(f"Starting build {build_id} for brand {brand_id}")
-            self._update_progress(build_id, "building", 5, "Initialisation...")
+            self._check_cancelled(build_id)
+            self._update_progress(build_id, "building", 3, "Nettoyage ansyen builds...")
 
-            # 1. Créer le dossier de travail
+            # 0. Nettoyage propre: supprimer les anciens dossiers de travail
             work_key = build_id.split("-")[0]
-            work_dir = BUILD_DIR / work_key
-            work_dir.mkdir(exist_ok=True)
+            _clean_stale_work_dirs(keep_key=work_key, max_age_seconds=3600)
 
-            self._update_progress(build_id, "building", 10, "Copie du projet de base...")
+            self._check_cancelled(build_id)
+            self._update_progress(build_id, "building", 5, "Inisyalizasyon...")
+
+            # 1. Créer le dossier de travail (toujours propre)
+            work_dir = BUILD_DIR / work_key
+            if work_dir.exists():
+                logger.info(f"Cleaning existing work dir: {work_dir}")
+                shutil.rmtree(work_dir, ignore_errors=True)
+                time.sleep(1)
+            work_dir.mkdir(parents=True, exist_ok=True)
+
+            self._update_progress(build_id, "building", 10, "Kopi pwojè debaz...")
 
             # 2. Copier le projet de base
             # Utilise un dossier court pour eviter les chemins trop longs sous Windows
             copy_target_dir = work_dir / "a"
             if not BASE_PROJECT_PATH.exists():
-                raise Exception(f"Base project not found at {BASE_PROJECT_PATH}")
+                raise Exception(f"Pwojè debaz pa jwenn nan {BASE_PROJECT_PATH}")
 
             shutil.copytree(
                 BASE_PROJECT_PATH,
@@ -117,6 +231,8 @@ class BuildService:
                     "test_reports",
                     "test_results",
                     "memory",
+                    "*.apk",
+                    "*.aab",
                 ),
                 ignore_dangling_symlinks=True,
             )
@@ -125,63 +241,62 @@ class BuildService:
                 subst_drive = self._create_subst_drive(work_dir)
                 if subst_drive:
                     app_dir = Path(f"{subst_drive}:\\") / "a"
+                    logger.info(f"Using SUBST drive: {subst_drive}:")
                 else:
-                    allow_long_paths = os.getenv("TAPTAPGO_ALLOW_LONG_PATHS", "").lower() in ("1", "true", "yes")
-                    if allow_long_paths:
-                        self._update_progress(
-                            build_id,
-                            "building",
-                            12,
-                            "SUBST pa disponib, ap kontinye ak chemen nòmal (long paths dwe aktive).",
-                        )
-                        app_dir = copy_target_dir
-                    else:
-                        raise Exception(
-                            "SUBST pa disponib pou Windows. Mete TAPTAPGO_BUILD_DIR sou yon chemen kout (eg: C:\\tb) "
-                            "oswa aktive long paths nan Windows epi mete TAPTAPGO_ALLOW_LONG_PATHS=1."
-                        )
+                    # Pas de blocage: on continue avec le chemin normal (C:\tb\xxx\a)
+                    logger.info("SUBST pa disponib, ap kontinye ak chemen nòmal")
+                    self._update_progress(
+                        build_id,
+                        "building",
+                        12,
+                        "Ap kontinye san SUBST. Si erè chemen, mete TAPTAPGO_ALLOW_LONG_PATHS=1.",
+                    )
+                    app_dir = copy_target_dir
 
-            self._update_progress(build_id, "building", 20, "Personnalisation app.json...")
+            self._update_progress(build_id, "building", 20, "Pesonalizasyon app.json...")
 
             # 3. Personnaliser app.json
             self._customize_app_json(app_dir, config)
 
-            self._update_progress(build_id, "building", 30, "Sauvegarde du logo...")
+            self._update_progress(build_id, "building", 25, "Sovgad logo...")
 
             # 4. Sauvegarder le logo
             if config.get("logo"):
                 self._save_logo(app_dir, config["logo"])
 
-            self._update_progress(build_id, "building", 40, "Personnalisation des couleurs...")
+            self._update_progress(build_id, "building", 30, "Pesonalizasyon koulè yo...")
 
             # 5. Personnaliser les couleurs
             self._customize_colors(app_dir, config)
 
-            self._update_progress(build_id, "building", 45, "Configuration de la marque...")
+            self._check_cancelled(build_id)
+            self._update_progress(build_id, "building", 35, "Konfigirasyon mak la...")
 
             # 5b. Injecter la config de marque (brand id/name)
             self._customize_brand_config(app_dir, config)
 
+            self._check_cancelled(build_id)
             build_mode = str(config.get("build_mode") or "local").lower()
             if build_mode == "cloud":
                 self._update_progress(build_id, "building", 55, "Build cloud (EAS) an preparasyon...")
-                build_url = self._build_with_eas(app_dir, build_id)
+                build_url, eas_build_id = self._build_with_eas(app_dir, build_id, config)
                 self.supabase.table("builds").update(
                     {
                         "status": "building",
                         "progress": 70,
                         "apk_url": build_url,
-                        "message": "Build cloud lanse. Ouvri lyen pou swiv.",
+                        "message": "Build cloud lanse. Ouvri lyen pou swiv. Apre sa ou ka soumèt nan Play Store.",
+                        "eas_build_id": eas_build_id or None,
                     }
                 ).eq("id", build_id).execute()
                 return
 
-            self._update_progress(build_id, "building", 50, "Installation des dépendances...")
+            self._update_progress(build_id, "building", 40, "Enstalasyon depandans yo...")
 
             # 6. Installer les dépendances
-            self._install_dependencies(app_dir)
+            self._install_dependencies(app_dir, build_id)
 
-            self._update_progress(build_id, "building", 60, "Génération de l'APK...")
+            self._update_progress(build_id, "building", 55, "Jenerasyon APK la...")
 
             # 7. Build APK
             apk_path = self._build_with_expo(app_dir, build_id)
@@ -193,10 +308,11 @@ class BuildService:
             output_path.mkdir(exist_ok=True)
 
             company_slug = config["company_name"].replace(" ", "-").lower()
-            final_apk = output_path / f"{company_slug}-v1.0.0.apk"
+            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            final_apk = output_path / f"{company_slug}-v1.0.0-{timestamp}.apk"
 
             if not apk_path.exists():
-                raise Exception(f"APK not found at {apk_path}")
+                raise Exception(f"APK pa jwenn nan {apk_path}")
 
             shutil.copy(apk_path, final_apk)
 
@@ -230,11 +346,11 @@ class BuildService:
                     "apk_path": str(final_apk),
                     "apk_url": public_url or f"/api/superadmin/builds/download/{build_id}",
                     "message": (
-                        "APK pare (lokal)."
+                        "APK pare! Telechaje li kounye a."
+                        if public_url
+                        else "APK pare (lokal)."
                         if local_only
                         else "APK pare. Upload echwe, lyen lokal aktive."
-                        if upload_error
-                        else "APK pare."
                     ),
                     "completed_at": datetime.utcnow().isoformat(),
                 }
@@ -242,33 +358,47 @@ class BuildService:
 
             logger.info(f"Build {build_id} completed successfully")
 
-        except Exception as e:
-            logger.error(f"Build {build_id} failed: {e}", exc_info=True)
+        except BuildCancelledException as e:
+            logger.info(f"Build {build_id} anile pa itilizatè")
             self.supabase.table("builds").update(
                 {
                     "status": "failed",
-                    "error": str(e),
+                    "progress": 0,
+                    "message": "Build anile pa itilizatè",
+                    "completed_at": datetime.utcnow().isoformat(),
+                }
+            ).eq("id", build_id).execute()
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Build {build_id} echwe: {error_msg}", exc_info=True)
+            self.supabase.table("builds").update(
+                {
+                    "status": "failed",
+                    "progress": 0,
+                    "error": error_msg,
+                    "message": f"Erè: {error_msg[:200]}",
                     "completed_at": datetime.utcnow().isoformat(),
                 }
             ).eq("id", build_id).execute()
 
         finally:
-            # Nettoyer le dossier de travail
+            self._cancel_requested.pop(build_id, None)
             if subst_drive:
                 self._remove_subst_drive(subst_drive)
             if work_dir and work_dir.exists():
                 try:
-                    shutil.rmtree(work_dir)
-                    logger.info(f"Cleaned up work directory for build {build_id}")
+                    time.sleep(2)
+                    shutil.rmtree(work_dir, ignore_errors=True)
+                    logger.info(f"Netwaye dosye travay pou build {build_id}")
                 except Exception as e:
-                    logger.warning(f"Failed to clean up work directory: {e}")
+                    logger.warning(f"Pa kapab netwaye dosye travay: {e}")
 
     def _customize_app_json(self, app_dir: Path, config: Dict[str, Any]):
         """Personnaliser app.json"""
         app_json_path = app_dir / "app.json"
 
         if not app_json_path.exists():
-            raise Exception("app.json not found in base project")
+            raise Exception("app.json pa jwenn nan pwojè debaz")
 
         with open(app_json_path, "r", encoding="utf-8") as f:
             app_json = json.load(f)
@@ -304,6 +434,7 @@ class BuildService:
 
         with open(app_json_path, "w", encoding="utf-8") as f:
             json.dump(app_json, f, indent=2, ensure_ascii=False)
+        logger.info("app.json configured successfully")
 
     def _save_logo(self, app_dir: Path, logo_base64: str):
         """Sauvegarder le logo depuis base64"""
@@ -333,7 +464,7 @@ class BuildService:
         colors_file = app_dir / "src" / "constants" / "colors.ts"
 
         if not colors_file.exists():
-            logger.warning(f"Colors file not found at {colors_file}, skipping color customization")
+            logger.warning(f"Fichye colors.ts pa jwenn, skip pesonalizasyon koulè")
             return
 
         colors_content = f"""// Auto-generated colors for {config['company_name']}
@@ -397,6 +528,7 @@ export const Shadows = {{
         )
         with open(brand_file, "w", encoding="utf-8") as f:
             f.write(content)
+        logger.info("Brand config configured successfully")
 
     def _upload_to_storage(self, file_path: Path, storage_path: str) -> Optional[str]:
         """Uploader un APK dans Supabase Storage"""
@@ -419,102 +551,120 @@ export const Shadows = {{
             logger.error(f"Storage upload failed: {e}")
             raise
 
-    def _install_dependencies(self, app_dir: Path):
-        """Installer les dépendances npm"""
+    def _install_dependencies(self, app_dir: Path, build_id: str):
+        """Installer les dépendances npm avec logs détaillés"""
         try:
             use_yarn = (app_dir / "yarn.lock").exists()
             if use_yarn:
-                cmd = ["yarn", "install", "--frozen-lockfile"]
+                cmd = ["yarn", "install", "--frozen-lockfile", "--network-timeout", "100000"]
                 exe = shutil.which("yarn") or shutil.which("yarn.cmd")
             else:
-                cmd = ["npm", "install"]
+                cmd = ["npm", "install", "--legacy-peer-deps"]
                 exe = shutil.which("npm") or shutil.which("npm.cmd")
 
             if not exe:
-                raise Exception("Package manager not found in PATH (npm/yarn)")
+                raise Exception("npm/yarn pa jwenn nan PATH")
 
             cmd[0] = exe
+            logger.info(f"Installing dependencies: {' '.join(cmd)}")
+            log_path = BUILD_LOG_DIR / f"{build_id}-npm.log"
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                log_file.write("=== Dependency installation ===\n")
+                log_file.write(f"Command: {' '.join(cmd)}\n")
+                log_file.write(f"Working dir: {app_dir}\n\n")
+
             result = subprocess.run(
                 cmd,
                 cwd=app_dir,
                 capture_output=True,
                 text=True,
-                timeout=600,
+                timeout=DEPENDENCY_TIMEOUT,
             )
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(result.stdout or "")
+                log_file.write(result.stderr or "")
 
             if result.returncode != 0:
-                raise Exception(f"Dependencies install failed: {result.stderr}")
-
+                raise Exception(
+                    f"Enstalasyon depandans echwe. Log: {log_path}\n{result.stderr[:500]}"
+                )
             logger.info("Dependencies installed successfully")
         except subprocess.TimeoutExpired:
-            raise Exception("Dependencies install timed out after 10 minutes")
+            raise Exception(
+                f"Enstalasyon depandans timeout apre {DEPENDENCY_TIMEOUT // 60} minit"
+            )
         except Exception as e:
-            raise Exception(f"Failed to install dependencies: {e}")
+            raise Exception(f"Erè nan enstalasyon depandans: {e}")
 
     def _build_with_expo(self, app_dir: Path, build_id: str) -> Path:
-        """Build APK avec Expo"""
+        """Build APK avec Expo - timeouts et logs améliorés"""
         try:
-            self._update_progress(build_id, "building", 65, "Prébuild Expo...")
+            self._update_progress(build_id, "building", 60, "Prebuild Expo...")
             logger.info("Starting Expo prebuild...")
-
-            # Prebuild (génère les dossiers android/ios)
             local_expo = app_dir / "node_modules" / ".bin" / ("expo.cmd" if os.name == "nt" else "expo")
             if local_expo.exists():
-                prebuild_cmd = [str(local_expo), "prebuild", "--platform", "android"]
+                prebuild_cmd = [str(local_expo), "prebuild", "--platform", "android", "--clean"]
             else:
                 npx = shutil.which("npx") or shutil.which("npx.cmd")
                 if not npx:
-                    raise Exception("npx not found in PATH (needed for expo prebuild)")
-                prebuild_cmd = [npx, "expo", "prebuild", "--platform", "android"]
+                    raise Exception("npx pa jwenn nan PATH")
+                prebuild_cmd = [npx, "expo", "prebuild", "--platform", "android", "--clean"]
 
+            logger.info(f"Prebuild command: {' '.join(prebuild_cmd)}")
             result = subprocess.run(
                 prebuild_cmd,
                 cwd=app_dir,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=PREBUILD_TIMEOUT,
             )
-
             if result.returncode != 0:
-                raise Exception(f"expo prebuild failed: {result.stderr}")
+                log_path = BUILD_LOG_DIR / f"{build_id}-prebuild.log"
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(result.stdout or "")
+                    f.write(result.stderr or "")
+                raise Exception(
+                    f"expo prebuild echwe. Log: {log_path}\n{result.stderr[:500]}"
+                )
 
             self._update_progress(build_id, "building", 70, "Gradle build...")
             logger.info("Prebuild completed, starting Gradle build...")
-
-            # Build avec Gradle
             android_dir = app_dir / "android"
             if not android_dir.exists():
-                raise Exception("Android folder not found after prebuild")
-
+                raise Exception("Dosye android pa jenere apre prebuild")
             sdk_root = os.getenv("ANDROID_HOME") or os.getenv("ANDROID_SDK_ROOT")
             if not sdk_root:
-                raise Exception("ANDROID_HOME/ANDROID_SDK_ROOT not set (Android SDK required)")
-
+                raise Exception("ANDROID_HOME/ANDROID_SDK_ROOT pa konfigire")
             gradlew = android_dir / ("gradlew.bat" if os.name == "nt" else "gradlew")
             if not gradlew.exists():
-                raise Exception(f"Gradle wrapper not found at {gradlew}")
-
+                raise Exception(f"Gradle wrapper pa jwenn nan {gradlew}")
             if os.name != "nt":
                 os.chmod(gradlew, 0o755)
 
-            self._update_progress(build_id, "building", 75, "Gradle en cours...")
+            # Optimiser Gradle: cache + une seule ABI (arm64-v8a) = build 2–4x plus rapide
+            self._optimize_gradle_for_speed(android_dir)
+
+            self._update_progress(build_id, "building", 75, "Gradle compilation...")
             gradle_cmd = [
                 str(gradlew),
                 "assembleRelease",
-                "--no-daemon",
                 "--parallel",
+                "--build-cache",
                 "--stacktrace",
-                "-x",
-                "lint",
-                "-x",
-                "test",
+                "-x", "lint",
+                "-x", "test",
+                "-PreactNativeArchitectures=arm64-v8a",
+                "--console=plain",
             ]
             log_path = BUILD_LOG_DIR / f"{build_id}-gradle.log"
             env = os.environ.copy()
             if os.name == "nt":
-                env["GRADLE_USER_HOME"] = str(BUILD_DIR / "gradle")
+                gradle_home = BUILD_DIR / "gradle"
+                gradle_home.mkdir(exist_ok=True)
+                env["GRADLE_USER_HOME"] = str(gradle_home)
                 env["TMP"] = str(BUILD_DIR)
                 env["TEMP"] = str(BUILD_DIR)
+            logger.info(f"Gradle command: {' '.join(gradle_cmd)}")
             process = subprocess.Popen(
                 gradle_cmd,
                 cwd=android_dir,
@@ -523,88 +673,133 @@ export const Shadows = {{
                 text=True,
                 env=env,
             )
-
             start = time.time()
             last_update = start
             last_lines = []
             with open(log_path, "w", encoding="utf-8") as log_file:
                 log_file.write("=== Gradle build output ===\n")
+                log_file.write(f"Command: {' '.join(gradle_cmd)}\n")
+                log_file.write(f"Working dir: {android_dir}\n\n")
+
+            # Watchdog: vérifier l'annulation toutes les 5 s même si Gradle n'imprime rien (readline bloque)
+            import threading
+            cancelled_by_watchdog = [False]  # list pour partage mutable entre threads
+
+            def _gradle_watchdog():
+                try:
+                    while True:
+                        time.sleep(5)
+                        if process.poll() is not None:
+                            return
+                        if self._peek_cancelled(build_id):
+                            cancelled_by_watchdog[0] = True
+                            process.kill()
+                            return
+                except Exception as e:
+                    logger.warning(f"Gradle watchdog: {e}")
+
+            watchdog = threading.Thread(target=_gradle_watchdog, daemon=True)
+            watchdog.start()
+
             while True:
                 line = process.stdout.readline() if process.stdout else ""
                 if line:
                     cleaned = line.strip()
                     last_lines.append(cleaned)
-                    last_lines = last_lines[-50:]
+                    last_lines = last_lines[-100:]
                     with open(log_path, "a", encoding="utf-8") as log_file:
                         log_file.write(cleaned + "\n")
                 if process.poll() is not None:
                     break
                 now = time.time()
-                if now - last_update > 20:
-                    last_line = last_lines[-1] if last_lines else "Gradle ap travay..."
-                    self._update_progress(build_id, "building", 75, last_line[:200])
-                    last_update = now
-                if now - start > 1200:
+                if self._is_cancelled(build_id):
                     process.kill()
-                    raise Exception("Gradle build timed out")
+                    raise BuildCancelledException("Build anile pa itilizatè")
+                if now - last_update > 15:
+                    elapsed = int(now - start)
+                    last_line = last_lines[-1] if last_lines else "Gradle ap travay..."
+                    msg = f"{last_line[:150]} ({elapsed}s)"
+                    self._update_progress(build_id, "building", 75, msg)
+                    last_update = now
+                if now - start > GRADLE_TIMEOUT:
+                    process.kill()
+                    raise Exception(
+                        f"Gradle build timeout apre {GRADLE_TIMEOUT // 60} minit"
+                    )
+
+            if cancelled_by_watchdog[0]:
+                raise BuildCancelledException("Build anile pa itilizatè")
+            if self._is_cancelled(build_id):
+                raise BuildCancelledException("Build anile pa itilizatè")
 
             if process.returncode != 0:
-                tail = "\n".join(last_lines[-20:])
+                tail = "\n".join(last_lines[-30:])
                 raise Exception(
-                    "Gradle build failed.\n"
+                    f"Gradle build echwe (code {process.returncode}).\n"
                     f"Dernye liy yo:\n{tail}\n"
                     f"Log konplè: {log_path}"
                 )
+            self._update_progress(build_id, "building", 80, "APK compilation fini!")
 
-            self._update_progress(build_id, "building", 80, "Compilation APK...")
-
-            # L'APK sera dans android/app/build/outputs/apk/release/
-            apk_path = (
-                android_dir
-                / "app"
-                / "build"
-                / "outputs"
-                / "apk"
-                / "release"
-                / "app-release.apk"
-            )
-
+            apk_path = android_dir / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
             if not apk_path.exists():
-                raise Exception(f"APK not found at expected location: {apk_path}")
-
-            logger.info(f"APK built successfully at {apk_path}")
+                possible_paths = [
+                    android_dir / "app" / "build" / "outputs" / "apk" / "release" / "app-release-unsigned.apk",
+                    android_dir / "app" / "build" / "outputs" / "apk" / "app-release.apk",
+                ]
+                for path in possible_paths:
+                    if path.exists():
+                        apk_path = path
+                        break
+                else:
+                    raise Exception(f"APK pa jwenn. Tcheke log: {log_path}")
+            logger.info(f"APK built successfully: {apk_path} ({apk_path.stat().st_size} bytes)")
             return apk_path
 
         except subprocess.TimeoutExpired:
-            raise Exception("Build timed out")
+            raise Exception("Build timeout")
         except Exception as e:
-            logger.error(f"Build failed: {e}")
+            logger.error(f"Build echwe: {e}")
             raise
 
-    def _build_with_eas(self, app_dir: Path, build_id: str) -> str:
-        """Lancer un build cloud via EAS et retourner le lien du build."""
+    def _build_with_eas(self, app_dir: Path, build_id: str, config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+        """Lancer un build cloud via EAS. Retourne (build_url, eas_build_id) pour EAS Submit."""
         try:
             eas = shutil.which("eas") or shutil.which("eas.cmd")
             if eas:
-                cmd = [eas, "build", "-p", "android", "--profile", "preview", "--non-interactive", "--json"]
+                cmd = [eas, "build", "-p", "android", "--profile", "preview", "--non-interactive", "--no-wait", "--json"]
             else:
                 npx = shutil.which("npx") or shutil.which("npx.cmd")
                 if not npx:
                     raise Exception("eas/npx pa jwenn nan PATH")
-                cmd = [npx, "eas", "build", "-p", "android", "--profile", "preview", "--non-interactive", "--json"]
+                cmd = [npx, "eas", "build", "-p", "android", "--profile", "preview", "--non-interactive", "--no-wait", "--json"]
 
+            env = os.environ.copy()
+            env["EXPO_PUBLIC_BRAND_ID"] = str(config.get("brand_id", ""))
+            env["EXPO_PUBLIC_BRAND_NAME"] = str(config.get("company_name", ""))
+            backend_url = os.getenv("EXPO_PUBLIC_BACKEND_URL") or os.getenv("TAPTAPGO_PUBLIC_BACKEND_URL") or ""
+            if backend_url:
+                env["EXPO_PUBLIC_BACKEND_URL"] = backend_url
+                env["EXPO_PUBLIC_BACKEND_URL_ANDROID"] = backend_url
+            if os.getenv("EXPO_TOKEN"):
+                env["EXPO_TOKEN"] = os.getenv("EXPO_TOKEN")
+
+            # --no-wait: on n'attend que la soumission (upload + file d'attente), pas la fin du build sur Expo.
+            # Timeout 10 min pour la phase upload/soumission ; le build continue sur expo.dev.
             result = subprocess.run(
                 cmd,
                 cwd=app_dir,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=600,
+                env=env,
             )
 
             if result.returncode != 0:
-                raise Exception(f"EAS build echwe: {result.stderr}")
+                raise Exception(f"EAS build echwe: {result.stderr or result.stdout}")
 
             build_url = ""
+            eas_build_id = None
             for line in (result.stdout or "").splitlines()[::-1]:
                 line = line.strip()
                 if not line:
@@ -616,18 +811,46 @@ export const Shadows = {{
                             payload = payload[0]
                         if isinstance(payload, dict):
                             build_url = payload.get("buildUrl") or payload.get("build_url") or ""
-                            if build_url:
+                            eas_build_id = payload.get("id") or payload.get("buildId")
+                            if build_url or eas_build_id:
                                 break
                     except Exception:
                         continue
             if not build_url:
                 build_url = "https://expo.dev/accounts/your-account/projects"
-            return build_url
+            return (build_url, eas_build_id)
         except subprocess.TimeoutExpired:
-            raise Exception("EAS build timed out")
+            raise Exception("Soumission EAS timed out (upload/file d'attente depase 10 min)")
         except Exception as e:
             logger.error(f"EAS build failed: {e}")
             raise
+
+    def _optimize_gradle_for_speed(self, android_dir: Path) -> None:
+        """Active le cache Gradle et optimise la mémoire pour accélérer assembleRelease."""
+        props_path = android_dir / "gradle.properties"
+        if not props_path.exists():
+            return
+        try:
+            text = props_path.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            seen = {line.split("=")[0].strip() for line in lines if "=" in line and not line.strip().startswith("#")}
+            additions = []
+            if "org.gradle.caching" not in seen:
+                additions.append("org.gradle.caching=true")
+            if "org.gradle.parallel" not in seen:
+                additions.append("org.gradle.parallel=true")
+            if "org.gradle.jvmargs" in seen:
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("org.gradle.jvmargs="):
+                        if "-Xmx2048m" in line or "-Xmx1024m" in line:
+                            lines[i] = line.replace("-Xmx2048m", "-Xmx4096m").replace("-Xmx1024m", "-Xmx4096m")
+                        break
+            if additions:
+                lines.extend([""] + ["# Optimisations build (BuildService)"] + additions)
+            props_path.write_text("\n".join(lines), encoding="utf-8")
+            logger.info("gradle.properties optimisé: cache, parallel, mémoire")
+        except Exception as e:
+            logger.warning(f"Pa kapab optimize gradle.properties: {e}")
 
     def _update_progress(self, build_id: str, status: str, progress: int, message: str = ""):
         """Mettre à jour la progression du build"""
@@ -651,7 +874,8 @@ export const Shadows = {{
         for target in [BUILD_DIR, BUILD_LOG_DIR]:
             try:
                 if target.exists():
-                    shutil.rmtree(target)
+                    shutil.rmtree(target, ignore_errors=True)
+                    time.sleep(1)
                     target.mkdir(exist_ok=True)
                     removed.append(str(target))
             except Exception as e:
@@ -671,20 +895,25 @@ export const Shadows = {{
                     text=True,
                 )
                 if result.returncode == 0:
-                    logger.info(f"Created SUBST drive {letter}: for {work_dir}")
+                    logger.info(f"SUBST drive kreye: {letter}: -> {work_dir}")
                     return letter
-        logger.warning("No available drive letter for SUBST")
+        logger.warning("Pa gen lèt disponib pou SUBST")
         return None
 
     def _remove_subst_drive(self, letter: str):
         """Supprimer le lecteur SUBST."""
         if os.name != "nt":
             return
-        subprocess.run(
-            ["cmd", "/c", "subst", f"{letter}:", "/D"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            subprocess.run(
+                ["cmd", "/c", "subst", f"{letter}:", "/D"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            logger.info(f"SUBST drive retire: {letter}:")
+        except Exception as e:
+            logger.warning(f"Pa kapab retire SUBST drive: {e}")
 
     def get_build_status(self, build_id: str) -> Optional[Dict[str, Any]]:
         """Obtenir le statut d'un build"""
@@ -710,6 +939,62 @@ export const Shadows = {{
         except Exception as e:
             logger.error(f"Failed to list builds: {e}")
             return []
+
+    def submit_build_to_play_store(self, build_id: str, track: str = "internal") -> Dict[str, Any]:
+        """Soumèt un build EAS (cloud) nan Google Play Store via EAS Submit."""
+        build = self.get_build_status(build_id)
+        if not build:
+            raise Exception("Build pa jwenn")
+        eas_build_id = build.get("eas_build_id")
+        if not eas_build_id:
+            raise Exception(
+                "Se build cloud (EAS) ki ka soumèt nan Play Store. "
+                "Lanse yon 'Build rapid' (cloud) pou mak la, tann li fini, epi soumèt."
+            )
+        track = (track or "internal").lower()
+        if track not in ("internal", "alpha", "beta", "production"):
+            track = "internal"
+        try:
+            self.supabase.table("builds").update(
+                {"submit_status": "submitting", "submit_track": track}
+            ).eq("id", build_id).execute()
+            eas = shutil.which("eas") or shutil.which("eas.cmd")
+            if eas:
+                cmd = [eas, "submit", "--platform", "android", "--id", str(eas_build_id), "--track", track, "--non-interactive"]
+            else:
+                npx = shutil.which("npx") or shutil.which("npx.cmd")
+                if not npx:
+                    raise Exception("eas/npx pa jwenn nan PATH")
+                cmd = [npx, "eas", "submit", "--platform", "android", "--id", str(eas_build_id), "--track", track, "--non-interactive"]
+            env = os.environ.copy()
+            if os.getenv("EXPO_TOKEN"):
+                env["EXPO_TOKEN"] = os.getenv("EXPO_TOKEN")
+            result = subprocess.run(
+                cmd,
+                cwd=str(BASE_PROJECT_PATH),
+                capture_output=True,
+                text=True,
+                timeout=600,
+                env=env,
+            )
+            if result.returncode != 0:
+                err = result.stderr or result.stdout or "Erè enkonni"
+                self.supabase.table("builds").update(
+                    {"submit_status": "failed", "submit_track": track}
+                ).eq("id", build_id).execute()
+                raise Exception(f"EAS Submit echwe: {err[:500]}")
+            self.supabase.table("builds").update(
+                {"submit_status": "submitted", "submit_track": track}
+            ).eq("id", build_id).execute()
+            logger.info(f"Build {build_id} submitted to Play Store track: {track}")
+            return {"success": True, "message": f"Soumèt nan Play Store (track: {track}).", "track": track}
+        except subprocess.TimeoutExpired:
+            self.supabase.table("builds").update({"submit_status": "failed"}).eq("id", build_id).execute()
+            raise Exception("EAS Submit timeout")
+        except Exception as e:
+            if "submit_status" not in str(e):
+                self.supabase.table("builds").update({"submit_status": "failed"}).eq("id", build_id).execute()
+            raise
 
     def clear_failed_builds(self, brand_id: Optional[str] = None) -> Dict[str, Any]:
         """Supprimer l'historique des builds échoués"""

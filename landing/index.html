@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="ht">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>TapTapGo - Transpò pou Ayiti</title>
+    <link rel="icon" href="images/logo.png" type="image/png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Work+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-red: #E53935;
+            --secondary-blue: #1E3A5F;
+            --tertiary-yellow: #F4B400;
+            --bg-light: #F4F6F9;
+            --surface-white: #FFFFFF;
+            --text-dark: #1A1F2B;
+            --text-secondary: #6B7280;
+            --gradient-hero: linear-gradient(135deg, #E53935 0%, #C62828 100%);
+            --gradient-accent: linear-gradient(135deg, #F4B400 0%, #F57C00 100%);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body { font-family: 'Work Sans', sans-serif; color: var(--text-dark); background-color: var(--bg-light); overflow-x: hidden; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        .animate-on-scroll { opacity: 0; transform: translateY(30px); transition: all 0.6s ease-out; }
+        .animate-on-scroll.visible { opacity: 1; transform: translateY(0); }
+        header { position: fixed; top: 0; width: 100%; background: var(--surface-white); box-shadow: 0 2px 20px rgba(0,0,0,0.08); z-index: 1000; transition: all 0.3s ease; }
+        header.scrolled { box-shadow: 0 4px 30px rgba(0,0,0,0.15); }
+        nav { max-width: 1400px; margin: 0 auto; padding: 1rem 2rem; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; position: relative; gap: 1rem; }
+        .logo { display: flex; align-items: center; text-decoration: none; flex-shrink: 0; }
+        .logo-img { height: 64px; width: auto; max-width: 280px; object-fit: contain; display: block; }
+        .nav-links { display: flex; gap: 2.5rem; list-style: none; }
+        .nav-links a { color: var(--text-dark); text-decoration: none; font-weight: 500; transition: color 0.3s; position: relative; padding: 0.25rem 0; -webkit-tap-highlight-color: transparent; min-height: 44px; display: inline-flex; align-items: center; }
+        .nav-links a::after { content: ''; position: absolute; bottom: -5px; left: 0; width: 0; height: 3px; background: var(--primary-red); transition: width 0.3s; }
+        .nav-links a:hover { color: var(--primary-red); }
+        .nav-links a:hover::after { width: 100%; }
+        .cta-button { background: var(--gradient-hero); color: white; padding: 0.8rem 2rem; border-radius: 50px; text-decoration: none; font-weight: 600; transition: all 0.3s; box-shadow: 0 4px 15px rgba(229,57,53,0.3); -webkit-tap-highlight-color: transparent; min-height: 44px; display: inline-flex; align-items: center; }
+        .cta-button:hover { transform: translateY(-2px); box-shadow: 0 6px 25px rgba(229,57,53,0.4); }
+        .mobile-menu-btn { display: none; background: none; border: none; font-size: 1.5rem; color: var(--text-dark); cursor: pointer; padding: 0.5rem; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; }
+        .hero { margin-top: 100px; background: var(--gradient-hero); position: relative; overflow: hidden; padding: 5rem 2rem; min-height: 90vh; display: flex; align-items: center; }
+        .hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><defs><pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23g)"/></svg>'); opacity: 0.3; }
+        .hero-content { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: minmax(320px, 400px) 1fr; gap: 2rem; align-items: center; position: relative; z-index: 1; }
+        .hero-text h1 { font-family: 'Archivo Black', sans-serif; font-size: 4rem; color: white; line-height: 1.1; margin-bottom: 1.5rem; animation: fadeInUp 0.8s ease-out; }
+        .hero-text .highlight { color: var(--tertiary-yellow); }
+        .hero-text p { font-size: 1.4rem; color: rgba(255,255,255,0.95); margin-bottom: 2.5rem; animation: fadeInUp 0.8s ease-out 0.2s both; font-weight: 300; }
+        .hero-buttons { display: flex; gap: 1.5rem; flex-wrap: wrap; animation: fadeInUp 0.8s ease-out 0.4s both; }
+        .btn-primary, .btn-secondary { padding: 1.2rem 2.5rem; border-radius: 50px; text-decoration: none; font-weight: 600; font-size: 1.1rem; transition: all 0.3s; display: inline-flex; align-items: center; gap: 0.8rem; }
+        .btn-primary { background: white; color: var(--primary-red); box-shadow: 0 6px 25px rgba(0,0,0,0.15); }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+        .btn-secondary { background: rgba(255,255,255,0.15); color: white; border: 2px solid white; backdrop-filter: blur(10px); }
+        .btn-secondary:hover { background: white; color: var(--primary-red); transform: translateY(-3px); }
+        .hero-image { position: relative; animation: fadeInUp 0.8s ease-out 0.3s both; display: flex; justify-content: center; align-items: center; }
+        .phone-mockup { width: 100%; max-width: 900px; min-width: 420px; margin: 0; filter: drop-shadow(0 25px 70px rgba(0,0,0,0.4)); animation: float 3s ease-in-out infinite; mix-blend-mode: screen; object-fit: contain; }
+        .problem-solution { padding: 6rem 2rem; background: var(--surface-white); }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .section-header { text-align: center; margin-bottom: 4rem; }
+        .section-header h2 { font-family: 'Archivo Black', sans-serif; font-size: 3rem; color: var(--secondary-blue); margin-bottom: 1rem; }
+        .section-header p { font-size: 1.3rem; color: var(--text-secondary); max-width: 800px; margin: 0 auto; }
+        .problem-solution-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: center; }
+        .problem-box, .solution-box { padding: 3rem; border-radius: 30px; position: relative; overflow: hidden; }
+        .problem-box { background: linear-gradient(135deg,#f8f9fa 0%,#e9ecef 100%); border: 2px solid #dee2e6; }
+        .solution-box { background: var(--gradient-hero); color: white; }
+        .box-icon { font-size: 3rem; margin-bottom: 1.5rem; }
+        .box-title { font-family: 'Archivo Black', sans-serif; font-size: 2rem; margin-bottom: 1rem; }
+        .box-text { font-size: 1.1rem; line-height: 1.8; }
+        .sou-nou { padding: 6rem 2rem; background: var(--surface-white); }
+        .sou-nou-block { background: var(--bg-light); padding: 2.5rem; border-radius: 20px; margin-bottom: 2rem; border-left: 5px solid var(--primary-red); }
+        .sou-nou-block h3 { font-family: 'Archivo Black', sans-serif; font-size: 1.5rem; color: var(--secondary-blue); margin-bottom: 1rem; }
+        .sou-nou-block p { font-size: 1.1rem; line-height: 1.8; color: var(--text-secondary); }
+        .features { padding: 6rem 2rem; background: var(--bg-light); }
+        .features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 2.5rem; margin-top: 3rem; }
+        .feature-card { background: var(--surface-white); padding: 3rem 2rem; border-radius: 25px; text-align: center; transition: all 0.4s; position: relative; overflow: hidden; }
+        .feature-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 5px; background: var(--gradient-hero); transform: scaleX(0); transition: transform 0.4s; }
+        .feature-card:hover { transform: translateY(-10px); box-shadow: 0 20px 50px rgba(0,0,0,0.1); }
+        .feature-card:hover::before { transform: scaleX(1); }
+        .feature-icon { width: 80px; height: 80px; background: var(--gradient-accent); border-radius: 20px; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; margin: 0 auto 1.5rem; transition: all 0.4s; }
+        .feature-card:hover .feature-icon { transform: rotate(10deg) scale(1.1); }
+        .feature-card h3 { font-family: 'Archivo Black', sans-serif; font-size: 1.5rem; color: var(--secondary-blue); margin-bottom: 1rem; }
+        .feature-card p { color: var(--text-secondary); line-height: 1.8; }
+        .how-it-works { padding: 6rem 2rem; background: var(--secondary-blue); color: white; position: relative; overflow: hidden; }
+        .how-it-works::before { content: ''; position: absolute; top: -50%; right: -10%; width: 500px; height: 500px; background: radial-gradient(circle,rgba(244,180,0,0.1) 0%,transparent 70%); border-radius: 50%; }
+        .steps-container { display: grid; grid-template-columns: repeat(4,1fr); gap: 2rem; margin-top: 3rem; position: relative; z-index: 1; }
+        .step { text-align: center; position: relative; }
+        .step-number { width: 70px; height: 70px; background: var(--gradient-accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Archivo Black', sans-serif; font-size: 2rem; color: white; margin: 0 auto 1.5rem; box-shadow: 0 10px 30px rgba(244,180,0,0.3); }
+        .step h3 { font-family: 'Archivo Black', sans-serif; font-size: 1.3rem; margin-bottom: 0.8rem; }
+        .step p { color: rgba(255,255,255,0.9); font-size: 1rem; }
+        .apps-download { padding: 6rem 2rem; background: var(--surface-white); }
+        .apps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; margin-top: 3rem; align-items: center; }
+        .apps-grid.apps-single { grid-template-columns: 1fr; max-width: 560px; margin-left: auto; margin-right: auto; }
+        .app-card { background: var(--bg-light); padding: 3rem; border-radius: 30px; position: relative; overflow: hidden; }
+        .app-card::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--gradient-hero); opacity: 0; transition: opacity 0.4s; }
+        .app-card:hover::before { opacity: 0.05; }
+        .app-card-content { position: relative; z-index: 1; }
+        .app-badge { display: inline-block; background: var(--gradient-accent); color: white; padding: 0.5rem 1.5rem; border-radius: 50px; font-weight: 600; font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .app-card h3 { font-family: 'Archivo Black', sans-serif; font-size: 2rem; color: var(--secondary-blue); margin-bottom: 1rem; }
+        .app-card p { color: var(--text-secondary); margin-bottom: 2rem; line-height: 1.8; }
+        .store-buttons { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .store-btn { display: inline-flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1.5rem; background: var(--text-dark); color: white; text-decoration: none; border-radius: 12px; font-weight: 600; transition: all 0.3s; }
+        .store-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+        .store-icon { font-size: 1.8rem; }
+        .white-label { padding: 6rem 2rem; background: var(--bg-light); }
+        .white-label-content { max-width: 1200px; margin: 0 auto; background: var(--surface-white); padding: 4rem; border-radius: 30px; box-shadow: 0 20px 60px rgba(0,0,0,0.08); }
+        .form-intro { text-align: center; margin-bottom: 3rem; }
+        .form-intro h2 { font-family: 'Archivo Black', sans-serif; font-size: 2.5rem; color: var(--secondary-blue); margin-bottom: 1rem; }
+        .form-intro p { font-size: 1.2rem; color: var(--text-secondary); max-width: 800px; margin: 0 auto; }
+        .white-label-form { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group.full-width { grid-column: 1 / -1; }
+        .form-group label { font-weight: 600; color: var(--secondary-blue); margin-bottom: 0.5rem; font-size: 1rem; }
+        .form-group input,.form-group textarea { padding: 1rem; border: 2px solid #e5e7eb; border-radius: 12px; font-family: 'Work Sans', sans-serif; font-size: 16px; transition: all 0.3s; }
+        .form-group input:focus,.form-group textarea:focus { outline: none; border-color: var(--primary-red); box-shadow: 0 0 0 3px rgba(229,57,53,0.1); }
+        .form-group textarea { resize: vertical; min-height: 120px; }
+        .required { color: var(--primary-red); }
+        .submit-btn { grid-column: 1 / -1; background: var(--gradient-hero); color: white; padding: 1.2rem 3rem; border: none; border-radius: 50px; font-family: 'Work Sans', sans-serif; font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: all 0.3s; box-shadow: 0 6px 25px rgba(229,57,53,0.3); }
+        .submit-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 35px rgba(229,57,53,0.4); }
+        .why-choose { padding: 6rem 2rem; background: var(--surface-white); }
+        .benefits-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 2rem; margin-top: 3rem; }
+        .benefit-card { text-align: center; padding: 2rem 1.5rem; border-radius: 20px; background: var(--bg-light); transition: all 0.3s; }
+        .benefit-card:hover { transform: translateY(-5px); background: var(--gradient-hero); color: white; }
+        .benefit-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .vehicle-images { padding: 6rem 2rem; background: var(--surface-white); }
+        .vehicle-images-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.5rem; margin-top: 3rem; max-width: 1200px; margin-left: auto; margin-right: auto; }
+        .vehicle-image-card { text-align: center; border-radius: 24px; overflow: hidden; box-shadow: 0 15px 50px rgba(0,0,0,0.1); transition: all 0.4s; background: var(--bg-light); }
+        .vehicle-image-card:hover { transform: translateY(-8px); box-shadow: 0 25px 60px rgba(0,0,0,0.15); }
+        .vehicle-image-card img { width: 100%; height: 280px; object-fit: cover; display: block; }
+        .vehicle-image-card .vehicle-caption { padding: 1.5rem 1rem; font-family: 'Archivo Black', sans-serif; font-size: 1.2rem; color: var(--secondary-blue); }
+        .vehicle-image-wrap { position: relative; width: 100%; height: 280px; overflow: hidden; }
+        .vehicle-logo-overlay { position: absolute; inset: 0; background: url('images/logo.png') center center repeat; background-size: 80px 80px; opacity: 0.25; pointer-events: none; }
+        @media (max-width: 900px) { .vehicle-images-grid { grid-template-columns: 1fr; } }
+        .benefit-card h4 { font-family: 'Archivo Black', sans-serif; font-size: 1.2rem; margin-bottom: 0.5rem; }
+        .benefit-card p { font-size: 0.95rem; opacity: 0.9; }
+        footer { background: var(--secondary-blue); color: white; padding: 4rem 2rem 2rem; }
+        .footer-content { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 3rem; margin-bottom: 3rem; }
+        .footer-brand .footer-logo { display: block; height: 88px; width: auto; max-width: 320px; margin-bottom: 1rem; }
+        .footer-brand a { text-decoration: none; }
+        .footer-brand h3 { font-family: 'Archivo Black', sans-serif; font-size: 2rem; margin-bottom: 1rem; }
+        .footer-brand p { color: rgba(255,255,255,0.8); line-height: 1.8; }
+        .footer-links h4 { font-family: 'Archivo Black', sans-serif; font-size: 1.2rem; margin-bottom: 1.5rem; }
+        .footer-links ul { list-style: none; }
+        .footer-links li { margin-bottom: 0.8rem; }
+        .footer-links a { color: rgba(255,255,255,0.8); text-decoration: none; transition: color 0.3s; }
+        .footer-links a:hover { color: var(--tertiary-yellow); }
+        .footer-bottom { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 2rem; text-align: center; color: rgba(255,255,255,0.7); }
+        .social-links { display: flex; gap: 1rem; margin-top: 1.5rem; }
+        .social-link { width: 45px; height: 45px; background: rgba(255,255,255,0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; text-decoration: none; transition: all 0.3s; }
+        .social-link:hover { background: var(--tertiary-yellow); transform: translateY(-3px); }
+        .success-message { display: none; background: #10b981; color: white; padding: 1rem 2rem; border-radius: 12px; margin-top: 1rem; text-align: center; animation: fadeInUp 0.5s ease-out; }
+        .success-message.show { display: block; }
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; padding: 2rem; overflow-y: auto; }
+        .modal-overlay.show { display: flex; }
+        .modal-sou-nou { background: var(--surface-white); border-radius: 24px; max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 2.5rem; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.2); animation: fadeInUp 0.3s ease-out; }
+        .modal-sou-nou h2 { font-family: 'Archivo Black', sans-serif; font-size: 1.8rem; color: var(--secondary-blue); margin-bottom: 1.5rem; padding-right: 3rem; }
+        .modal-sou-nou .sou-nou-block { background: var(--bg-light); padding: 1.5rem; border-radius: 16px; margin-bottom: 1rem; border-left: 4px solid var(--primary-red); }
+        .modal-sou-nou .sou-nou-block h3 { font-family: 'Archivo Black', sans-serif; font-size: 1.2rem; color: var(--secondary-blue); margin-bottom: 0.5rem; }
+        .modal-sou-nou .sou-nou-block p { font-size: 1rem; line-height: 1.7; color: var(--text-secondary); }
+        .modal-close { position: absolute; top: 1.5rem; right: 1.5rem; background: none; border: none; font-size: 1.8rem; cursor: pointer; color: var(--text-secondary); padding: 0.3rem; line-height: 1; transition: color 0.3s; }
+        .modal-close:hover { color: var(--primary-red); }
+        .modal-sou-nou .modal-body { white-space: pre-wrap; font-size: 1rem; line-height: 1.7; color: var(--text-secondary); }
+        .modal-body { white-space: pre-wrap; font-size: 1rem; line-height: 1.7; color: var(--text-secondary); margin-top: 0.5rem; }
+        .sou-nou-content { max-height: 55vh; overflow-y: auto; margin-bottom: 1.5rem; }
+        .sou-nou-cta { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+        .sou-nou-btn { padding: 0.9rem 1.8rem; border-radius: 50px; font-weight: 600; text-decoration: none; transition: all 0.3s; display: inline-block; text-align: center; }
+        .sou-nou-btn-primary { background: var(--gradient-hero); color: white; box-shadow: 0 4px 15px rgba(229,57,53,0.3); }
+        .sou-nou-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(229,57,53,0.4); }
+        .sou-nou-btn-secondary { background: var(--secondary-blue); color: white; border: 2px solid var(--secondary-blue); }
+        .sou-nou-btn-secondary:hover { background: transparent; color: var(--secondary-blue); transform: translateY(-2px); }
+        .sant-ed-btn-agent { display: inline-block; margin: 0.5rem 0.5rem 0.5rem 0; padding: 0.75rem 1.5rem; background: var(--gradient-hero); color: white; border: none; border-radius: 50px; font-weight: 600; font-family: inherit; font-size: 1rem; cursor: pointer; box-shadow: 0 4px 15px rgba(229,57,53,0.3); transition: all 0.3s; }
+        .sant-ed-btn-agent:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(229,57,53,0.4); }
+        .sant-ed-btn-video { display: inline-block; margin: 0.5rem 0.5rem 0.5rem 0; padding: 0.75rem 1.5rem; background: var(--secondary-blue); color: white; border: none; border-radius: 50px; font-weight: 600; font-family: inherit; font-size: 1rem; cursor: pointer; text-decoration: none; transition: all 0.3s; }
+        .sant-ed-btn-video:hover { transform: translateY(-2px); opacity: 0.95; }
+        .modal-support-form .form-group { margin-bottom: 1rem; }
+        .modal-support-form .form-group label { display: block; font-weight: 600; margin-bottom: 0.4rem; font-size: 0.95rem; }
+        .modal-support-form .form-group input, .modal-support-form .form-group textarea { width: 100%; padding: 0.8rem; border: 2px solid #e5e7eb; border-radius: 12px; font-family: inherit; font-size: 16px; box-sizing: border-box; }
+        .modal-support-form .submit-btn { width: 100%; margin-top: 0.5rem; cursor: pointer; }
+        .explainer-slideshow { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #1E3A5F 0%, #2d4a6f 50%, #1a2d47 100%); border-radius: 12px; overflow: hidden; }
+        .explainer-slide { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; box-sizing: border-box; opacity: 0; transition: opacity 0.5s ease; }
+        .explainer-slide.active { opacity: 1; z-index: 1; }
+        .explainer-visual { width: 140px; height: 140px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 4rem; margin-bottom: 1.5rem; box-shadow: 0 10px 40px rgba(0,0,0,0.3); animation: explainer-pulse 2s ease-in-out infinite; }
+        .explainer-visual.step1 { background: linear-gradient(135deg, #E53935, #c62828); }
+        .explainer-visual.step2 { background: linear-gradient(135deg, #F4B400, #F57C00); }
+        .explainer-visual.step3 { background: linear-gradient(135deg, #2E7D32, #1B5E20); }
+        .explainer-visual.step4 { background: linear-gradient(135deg, #1565C0, #0D47A1); }
+        @keyframes explainer-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        .explainer-slide h3 { color: white; font-family: 'Archivo Black', sans-serif; font-size: 1.4rem; margin-bottom: 0.8rem; text-align: center; }
+        .explainer-slide p { color: rgba(255,255,255,0.9); font-size: 1rem; text-align: center; max-width: 400px; line-height: 1.6; }
+        .explainer-nav { position: absolute; bottom: 1rem; left: 0; right: 0; display: flex; justify-content: center; gap: 0.5rem; z-index: 2; }
+        .explainer-dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.4); cursor: pointer; transition: all 0.3s; }
+        .explainer-dot:hover, .explainer-dot.active { background: white; transform: scale(1.2); }
+        .explainer-arrows { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); display: flex; justify-content: space-between; padding: 0 0.5rem; z-index: 2; pointer-events: none; }
+        .explainer-arrows button { pointer-events: auto; background: rgba(255,255,255,0.2); border: none; width: 44px; height: 44px; border-radius: 50%; color: white; font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s; }
+        .explainer-arrows button:hover { background: rgba(255,255,255,0.4); transform: scale(1.1); }
+        @media (max-width: 1024px) {
+            .hero-content { grid-template-columns: 1fr; text-align: center; }
+            .hero-text h1 { font-size: 3rem; }
+            .hero-buttons { justify-content: center; }
+            .features-grid { grid-template-columns: repeat(2,1fr); }
+            .steps-container { grid-template-columns: repeat(2,1fr); }
+            .benefits-grid { grid-template-columns: repeat(2,1fr); }
+            .footer-content { grid-template-columns: 1fr 1fr; }
+            .problem-solution, .sou-nou, .features, .how-it-works, .apps-download, .white-label, .why-choose, .vehicle-images { padding: 4rem 1.5rem; }
+        }
+        @media (max-width: 768px) {
+            nav { padding: 1rem 1rem; }
+            .nav-links { display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; background: var(--surface-white); box-shadow: 0 10px 40px rgba(0,0,0,0.12); padding: 1rem 0; gap: 0; max-height: 0; overflow: hidden; opacity: 0; transition: max-height 0.3s ease, opacity 0.2s; z-index: 1001; }
+            .nav-links.open { display: flex; max-height: 400px; opacity: 1; }
+            .nav-links a { padding: 1rem 1.5rem; min-height: 48px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+            .nav-links a:last-child { border-bottom: none; }
+            .mobile-menu-btn { display: flex; }
+            .cta-button { margin-left: auto; }
+            .hero { margin-top: 72px; padding: 3rem 1rem; min-height: 85vh; }
+            .hero-text h1 { font-size: 2.2rem; margin-bottom: 1rem; }
+            .hero-text p { font-size: 1rem; margin-bottom: 1.5rem; }
+            .section-header { margin-bottom: 2.5rem; }
+            .section-header h2 { font-size: 2rem; }
+            .section-header p { font-size: 1rem; }
+            .features-grid, .apps-grid, .problem-solution-grid { grid-template-columns: 1fr; }
+            .steps-container, .benefits-grid { grid-template-columns: 1fr; }
+            .white-label-form { grid-template-columns: 1fr; }
+            .footer-content { grid-template-columns: 1fr; }
+            .hero-buttons { flex-direction: column; gap: 1rem; }
+            .btn-primary, .btn-secondary { width: 100%; justify-content: center; }
+            .problem-solution, .sou-nou, .features, .how-it-works, .apps-download, .white-label, .why-choose, .vehicle-images { padding: 3rem 1rem; }
+            .problem-box, .solution-box { padding: 2rem 1.5rem; }
+            .box-title { font-size: 1.5rem; }
+            .box-text { font-size: 1rem; }
+            .feature-card { padding: 2rem 1.5rem; }
+            .feature-card h3 { font-size: 1.25rem; }
+            .white-label-content { padding: 2rem 1.5rem; }
+            .form-intro h2 { font-size: 1.8rem; }
+            .form-intro p { font-size: 1rem; }
+            .modal-overlay { padding: 1rem; align-items: flex-start; }
+            .modal-sou-nou { padding: 2rem 1.5rem; max-height: 85vh; }
+        }
+        @media (max-width: 480px) {
+            .logo-img { max-width: 180px; height: 48px; }
+            .hero { padding: 2.5rem 0.75rem; min-height: 80vh; }
+            .hero-text h1 { font-size: 1.75rem; }
+            .section-header h2 { font-size: 1.6rem; }
+            .section-header p { font-size: 0.95rem; }
+            .store-buttons { flex-direction: column; }
+            .store-btn { width: 100%; justify-content: center; }
+            .vehicle-image-card img, .vehicle-image-wrap { height: 200px; }
+            .problem-solution, .sou-nou, .features, .how-it-works, .apps-download, .white-label, .why-choose, .vehicle-images { padding: 2.5rem 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <header id="header">
+        <nav>
+            <a href="https://taptapgoht.com" class="logo">
+                <img src="images/logo.png" alt="TapTapGo" class="logo-img">
+            </a>
+            <ul class="nav-links">
+                <li><a href="#lakay">Akèy</a></li>
+                <li><a href="#sou-nou">Sou Nou</a></li>
+                <li><a href="#transpo-images">Transpò</a></li>
+                <li><a href="#fonksyonalite">Fonksyonalite</a></li>
+                <li><a href="#aplikasyon">Aplikasyon</a></li>
+                <li><a href="#marque-pwop">Marque Pwop Ou</a></li>
+            </ul>
+            <a href="#aplikasyon" class="cta-button" id="cta-download-btn" role="button">Telechaje App La</a>
+            <button class="mobile-menu-btn" aria-label="Meni">☰</button>
+        </nav>
+    </header>
+    <section class="hero" id="lakay">
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1 data-landing="hero_title">Transpò <span class="highlight">Rapid</span><br>Pou Tout <span class="highlight">Ayiti</span></h1>
+                <p data-landing="hero_subtitle">Mande yon moto oswa machin kounye a. Pri klè, trajè rapid, chofè verifye. TapTapGo se sèvis transpò ki fèt pou nou!</p>
+                <div class="hero-buttons">
+                    <a href="#aplikasyon" class="btn-primary" id="hero-download-btn" role="button"><span>📱</span><span data-landing="hero_btn1">Telechaje Kounye A</span></a>
+                    <a href="#marque-pwop" class="btn-secondary" role="button"><span>🏢</span><span data-landing="hero_btn2">Mande Marque Pwop Ou</span></a>
+                </div>
+            </div>
+            <div class="hero-image">
+                <img src="images/hero-app-mockup.png" alt="TapTapGo App — Kote w ye? Ki kote w prale? Mande kous" class="phone-mockup" loading="eager">
+            </div>
+        </div>
+    </section>
+    <section class="problem-solution">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-landing="problem_title">Rezon Ki Fè Ou Bezwen TapTapGo</h2>
+                <p data-landing="problem_subtitle">Nou konprann pwoblèm transpò nan peyi a. Se pou sa nou kreye yon solisyon ki travay pou ou.</p>
+            </div>
+            <div class="problem-solution-grid">
+                <div class="problem-box animate-on-scroll">
+                    <div class="box-icon">😓</div>
+                    <h3 class="box-title">Pwoblèm</h3>
+                    <p class="box-text" data-landing="problem_text">Deplase nan Ayiti difisil. Ou pa konnen konbyen w ap peye, ou tann lontan, epi ou pa janm santi ou an sekirite. Pri yo pa klè, chofè yo pa disponib, epi transpò pa òganize byen.</p>
+                </div>
+                <div class="solution-box animate-on-scroll">
+                    <div class="box-icon">✨</div>
+                    <h3 class="box-title">Solisyon</h3>
+                    <p class="box-text" data-landing="solution_text">Ak TapTapGo, ou wè pri a avan w konfime, ou suiv chofè a an tan reyèl, epi ou peye avèk MonCash, NatCash oswa kach. Tout bagay klè, rapid, epi an sekirite. Transpò ki fèt pou Ayiti!</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    <section class="vehicle-images" id="transpo-images">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-landing="vehicle_images_title">Transpò Nou Yo</h2>
+                <p data-landing="vehicle_images_subtitle">Chwazi moto pou rapid oswa machin pou konfò. Chofè verifye, sekirite garanti.</p>
+            </div>
+            <div class="vehicle-images-grid">
+                <div class="vehicle-image-card animate-on-scroll">
+                    <img id="img-chofe-passager" src="images/moto-chofe-passager.png" alt="Chofè ak pasajè" loading="lazy">
+                    <div class="vehicle-caption">Chofè ak Pasajè</div>
+                </div>
+                <div class="vehicle-image-card animate-on-scroll">
+                    <img id="img-moto" src="images/moto-transport.png" alt="Moto" loading="lazy">
+                    <div class="vehicle-caption">Moto — Rapid</div>
+                </div>
+                <div class="vehicle-image-card animate-on-scroll">
+                    <div class="vehicle-image-wrap">
+                        <img id="img-auto" src="images/auto-transport.png" alt="Machin" loading="lazy">
+                        <div class="vehicle-logo-overlay" aria-hidden="true"></div>
+                    </div>
+                    <div class="vehicle-caption">Machin — Konfò</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <div class="modal-overlay" id="modal-sou-nou" role="dialog" aria-labelledby="modal-sou-nou-title" aria-modal="true">
+        <div class="modal-sou-nou">
+            <button class="modal-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-sou-nou-title">🚗 Sou Nou — Transpò Ki Fèt Pou Ayiti</h2>
+            <div class="modal-body sou-nou-content" id="modal-sou-nou-body"></div>
+            <div class="sou-nou-cta">
+                <a href="#aplikasyon" id="sou-nou-btn-download" class="sou-nou-btn sou-nou-btn-primary">Telechaje Kounye A</a>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="modal-sant-ed" role="dialog" aria-labelledby="modal-sant-ed-title" aria-modal="true">
+        <div class="modal-sou-nou">
+            <button class="modal-close modal-sant-ed-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-sant-ed-title">Sant Èd</h2>
+            <div class="modal-body" id="modal-sant-ed-body"></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="modal-support-message" role="dialog" aria-labelledby="modal-support-message-title" aria-modal="true">
+        <div class="modal-sou-nou">
+            <button class="modal-close modal-support-message-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-support-message-title">Pale Ak Yon Ajan</h2>
+            <p style="color:var(--text-secondary);margin-bottom:1rem;font-size:0.95rem;">Voye mesaj ou epi ekip nou an ap reponn w byento.</p>
+            <form class="modal-support-form" id="supportMessageForm">
+                <div class="form-group"><label for="support-name">Non w <span class="required">*</span></label><input type="text" id="support-name" name="name" required placeholder="Non konplè w"></div>
+                <div class="form-group"><label for="support-phone">Telefòn <span class="required">*</span></label><input type="tel" id="support-phone" name="phone" required placeholder="+509 1234 5678" value="+509 "></div>
+                <div class="form-group"><label for="support-email">Imèl <span class="required">*</span></label><input type="email" id="support-email" name="email" required placeholder="imel@egzanp.com"></div>
+                <div class="form-group"><label for="support-message">Mesaj ou <span class="required">*</span></label><textarea id="support-message" name="message" required placeholder="Ekri kesyon w oswa pwoblèm w genyen..." rows="5"></textarea></div>
+                <button type="submit" class="submit-btn">Voye Mesaj</button>
+            </form>
+            <div class="success-message" id="supportMessageSuccess" style="margin-top:1rem;">✅ Mèsi! Nou resevwa mesaj ou a. Nou ap reponn w byento!</div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="modal-video-eksplikasyon" role="dialog" aria-labelledby="modal-video-title" aria-modal="true">
+        <div class="modal-sou-nou" style="max-width:900px;">
+            <button class="modal-close modal-video-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-video-title">Videyo Eksplikasyon — TapTapGo</h2>
+            <div id="modal-video-container" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;background:#000;border-radius:12px;margin-top:1rem;">
+                <div id="modal-video-placeholder" class="explainer-slideshow" style="display:none;">
+                    <div class="explainer-slide active" data-slide="0">
+                        <div class="explainer-visual step1">📱</div>
+                        <h3>1. Telechaje App La</h3>
+                        <p>Pran TapTapGo sou App Store oswa Play Store. Gratis nèt! Chwazi wòl ou — pasajè oswa chofè.</p>
+                    </div>
+                    <div class="explainer-slide" data-slide="1">
+                        <div class="explainer-visual step2">📝</div>
+                        <h3>2. Enskri Ou</h3>
+                        <p>Kreye kont ou avèk nimewo telefòn w oswa imèl. Rapid e fasil. Ou ka enskri kòm pasajè oswa chofè.</p>
+                    </div>
+                    <div class="explainer-slide" data-slide="2">
+                        <div class="explainer-visual step3">📍</div>
+                        <h3>3. Mande Kous Ou</h3>
+                        <p>Chwazi kote w ye ak kote w prale. Wè pri a avan w konfime. Chwazi moto pou rapid oswa machin pou konfò.</p>
+                    </div>
+                    <div class="explainer-slide" data-slide="3">
+                        <div class="explainer-visual step4">🚗</div>
+                        <h3>4. Vwayaje!</h3>
+                        <p>Chofè a ap vin pran w. Suiv li sou kat la an tan reyèl. Peye avèk MonCash, NatCash oswa kach. Anjoye trajè a!</p>
+                    </div>
+                    <div class="explainer-arrows">
+                        <button type="button" id="explainer-prev" aria-label="Slide anvan">‹</button>
+                        <button type="button" id="explainer-next" aria-label="Slide pwochen">›</button>
+                    </div>
+                    <div class="explainer-nav" id="explainer-dots"></div>
+                </div>
+                <iframe id="modal-video-iframe" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;border:none;" allowfullscreen allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture"></iframe>
+                <video id="modal-video-direct" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;" controls playsinline></video>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="modal-kontakte-nou" role="dialog" aria-labelledby="modal-kontakte-nou-title" aria-modal="true">
+        <div class="modal-sou-nou">
+            <button class="modal-close modal-kontakte-nou-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-kontakte-nou-title">Kontakte Nou</h2>
+            <div class="modal-body" id="modal-kontakte-nou-body"></div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="modal-politik" role="dialog" aria-labelledby="modal-politik-title" aria-modal="true">
+        <div class="modal-sou-nou">
+            <button class="modal-close modal-politik-close" aria-label="Fèmen">×</button>
+            <h2 id="modal-politik-title">Politik Konfidansyalite</h2>
+            <div class="modal-body" id="modal-politik-body"></div>
+        </div>
+    </div>
+    <section class="features" id="fonksyonalite">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-landing="features_title">Sa Ou Ka Fè Ak TapTapGo</h2>
+                <p data-landing="features_subtitle">Dekouvri tout fonksyonalite ki fè TapTapGo diferan</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">🏍️</div><h3 data-landing="feature_1_title">Moto oswa Machin</h3><p data-landing="feature_1_text">Chwazi ant moto pou trajè rapid oswa machin pou plis konfò. Ou deside!</p></div>
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">💰</div><h3 data-landing="feature_2_title">Pri Transparan</h3><p data-landing="feature_2_text">Wè konbyen w ap peye avan w konfime kous la. Pa gen sipriz, tout bagay klè.</p></div>
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">📍</div><h3 data-landing="feature_3_title">Suiv An Tan Reyèl</h3><p data-landing="feature_3_text">Gade kote chofè a ye sou kat la ak konbyen tan l ap pran pou rive jwenn ou.</p></div>
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">💳</div><h3 data-landing="feature_4_title">Plizyè Metòd Peman</h3><p data-landing="feature_4_text">Peye avèk MonCash, NatCash, Bank oswa kach. Chwazi sa ki pi bon pou ou.</p></div>
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">⏰</div><h3 data-landing="feature_5_title">Pwograme Kous Ou</h3><p data-landing="feature_5_text">Mande yon kous kounye a oswa pwograme youn pou demen. Planifye deplasman w!</p></div>
+                <div class="feature-card animate-on-scroll"><div class="feature-icon">🛡️</div><h3 data-landing="feature_6_title">Chofè Verifye</h3><p data-landing="feature_6_text">Tout chofè yo pase nan yon pwosesis apwobasyon. Sekirite w se priyorite nou.</p></div>
+            </div>
+        </div>
+    </section>
+    <section class="how-it-works">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-landing="how_title">Kòman Sa Mache?</h2>
+                <p data-landing="how_subtitle">Kòmanse vwayaje an 4 etap senp</p>
+            </div>
+            <div class="steps-container">
+                <div class="step animate-on-scroll"><div class="step-number">1</div><h3 data-landing="step_1_title">Telechaje App La</h3><p data-landing="step_1_text">Pran TapTapGo sou App Store oswa Play Store. Gratis nèt!</p></div>
+                <div class="step animate-on-scroll"><div class="step-number">2</div><h3 data-landing="step_2_title">Enskri Ou</h3><p data-landing="step_2_text">Kreye kont ou avèk nimewo telefòn w oswa imèl. Rapid e fasil.</p></div>
+                <div class="step animate-on-scroll"><div class="step-number">3</div><h3 data-landing="step_3_title">Mande Kous Ou</h3><p data-landing="step_3_text">Chwazi kote w ye ak kote w prale. Konfime pri a.</p></div>
+                <div class="step animate-on-scroll"><div class="step-number">4</div><h3 data-landing="step_4_title">Vwayaje!</h3><p data-landing="step_4_text">Chofè a ap vin pran w. Suiv li sou kat la epi anjoye trajè a!</p></div>
+            </div>
+        </div>
+    </section>
+    <section class="apps-download" id="aplikasyon">
+        <div class="container">
+            <div class="section-header">
+                <h2 data-landing="apps_title">Telechaje Aplikasyon An</h2>
+                <p data-landing="apps_subtitle">Yon sèl app pou pasajè ak chofè — chwazi wòl ou lè w louvri app la</p>
+            </div>
+            <div class="apps-grid apps-single">
+                <div class="app-card animate-on-scroll">
+                    <div class="app-card-content">
+                        <span class="app-badge">TAP TAP GO</span>
+                        <h3 data-landing="app_unified_title">Yon app, tout moun</h3>
+                        <p data-landing="app_unified_text">Si w vle mande kous, ouvri app la kòm pasajè. Si w vle vin chofè, chwazi mòd chofè. Mande moto oswa machin, suiv trajè a, peye fasil — oswa enskri ou kòm chofè, aksepte kous yo, epi touche lajan w. Tout bagay nan menm aplikasyon an.</p>
+                        <div class="store-buttons" id="store-buttons">
+                            <a id="store-play-btn" href="https://play.google.com/store/apps/details?id=com.taptapgo.app" class="store-btn" target="_blank" rel="noopener"><span class="store-icon">📱</span><div><div style="font-size:0.7rem;opacity:0.8">Jwenn li sou</div><div>Play Store</div></div></a>
+                            <a id="store-app-btn" href="https://apps.apple.com/app/taptapgo" class="store-btn" target="_blank" rel="noopener"><span class="store-icon">🍎</span><div><div style="font-size:0.7rem;opacity:0.8">Telechaje sou</div><div>App Store</div></div></a>
+                            <a id="store-apk-btn" href="#" class="store-btn" target="_blank" rel="noopener" style="display:none"><span class="store-icon">⬇️</span><div><div style="font-size:0.7rem;opacity:0.8">Telechaje dirèk</div><div>APK</div></div></a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <section class="white-label" id="marque-pwop">
+        <div class="container">
+            <div class="white-label-content">
+                <div class="form-intro">
+                    <h2 data-landing="white_label_title">Mande Solisyon Marque Pwop Ou (White-Label)</h2>
+                    <p data-landing="white_label_intro">Vil ou oswa antrepriz ou vle gen pwòp aplikasyon transpò li? Ak TapTapGo White-Label, ou ka gen non w, koulè w, ak zòn w. Ranpli fòmilè sa a pou nou kontakte w!</p>
+                </div>
+                <form class="white-label-form" id="whitelabelForm">
+                    <div class="form-group"><label>Non Antrepriz / Òganizasyon <span class="required">*</span></label><input type="text" name="company" required placeholder="Egzanp: Vil Jakmèl"></div>
+                    <div class="form-group"><label>Non Responsab <span class="required">*</span></label><input type="text" name="name" required placeholder="Non konplè w"></div>
+                    <div class="form-group"><label>Telefòn <span class="required">*</span></label><input type="tel" name="phone" required placeholder="1234 5678" value="+509 "></div>
+                    <div class="form-group"><label>Imèl <span class="required">*</span></label><input type="email" name="email" required placeholder="imel@egzanp.com"></div>
+                    <div class="form-group full-width"><label>Vil oswa Zòn <span class="required">*</span></label><input type="text" name="zone" required placeholder="Egzanp: Jakmèl, Leyogan"></div>
+                    <div class="form-group full-width"><label>Mesaj / Bezwen Ou</label><textarea name="message" placeholder="Dekri pwojè w, konbyen chofè w panse w ap genyen..."></textarea></div>
+                    <div class="form-group"><label>Sitwèb (Opsyonèl)</label><input type="url" name="website" placeholder="https://egzanp.com"></div>
+                    <div class="form-group"><label>Konbyen Chofè Ou Estime (Opsyonèl)</label><input type="number" name="drivers" placeholder="Egzanp: 50"></div>
+                    <button type="submit" class="submit-btn">Voye Demann Lan</button>
+                    <div class="success-message" id="successMessage">✅ Mèsi! Nou resevwa demann ou a. Nou ap kontakte w byento!</div>
+                </form>
+            </div>
+        </div>
+    </section>
+    <section class="why-choose">
+        <div class="container">
+            <div class="section-header"><h2 data-landing="why_title">Poukisa Chwazi TapTapGo?</h2><p data-landing="why_subtitle">Sa ki fè nou diferan</p></div>
+            <div class="benefits-grid">
+                <div class="benefit-card animate-on-scroll"><div class="benefit-icon">🔒</div><h4 data-landing="benefit_1_title">Sekirite</h4><p data-landing="benefit_1_text">Chofè verifye, trajè suiv, sipò 24/7</p></div>
+                <div class="benefit-card animate-on-scroll"><div class="benefit-icon">💎</div><h4 data-landing="benefit_2_title">Pri Klè</h4><p data-landing="benefit_2_text">Wè pri a avan w konfime, pa gen frè kache</p></div>
+                <div class="benefit-card animate-on-scroll"><div class="benefit-icon">🇭🇹</div><h4 data-landing="benefit_3_title">Fèt Pou Ayiti</h4><p data-landing="benefit_3_text">Sistèm adapte pou reyalite ayisyen an</p></div>
+                <div class="benefit-card animate-on-scroll"><div class="benefit-icon">⚡</div><h4 data-landing="benefit_4_title">Rapid</h4><p data-landing="benefit_4_text">Chofè yo toupre w, tan datant kout</p></div>
+            </div>
+        </div>
+    </section>
+    <footer id="kontak">
+        <div class="container">
+            <div class="footer-content" id="footer-dynamic"></div>
+            <div class="footer-bottom"><p id="footer-copyright"></p></div>
+        </div>
+    </footer>
+    <script>
+        (function(){
+            const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:8000' : (window.location.origin.includes('taptapgoht') ? 'https://taptapgoht.com' : window.location.origin);
+            const BASE = window.location.origin.replace(/\/$/, '');
+            fetch(API_BASE + '/api/landing').then(r=>r.json()).then(d=>{
+                const c = d.content || {};
+                document.querySelectorAll('[data-landing]').forEach(el=>{
+                    const k = el.getAttribute('data-landing');
+                    if(c[k]) el.innerHTML = c[k];
+                });
+                var souNouBody = document.getElementById('modal-sou-nou-body');
+                if (souNouBody && c.sou_nou_content) souNouBody.textContent = c.sou_nou_content;
+                var footer = d.footer || {};
+                var brandTitle = footer.brand_title || 'TapTapGo';
+                var brandText = footer.brand_text || '';
+                var columns = Array.isArray(footer.columns) ? footer.columns : [];
+                var html = '<div class="footer-brand"><a href="https://taptapgoht.com"><img src="images/logo.png" alt="TapTapGo" class="footer-logo"></a><p>' + (brandText ? brandText.replace(/</g,'&lt;').replace(/>/g,'&gt;') : '') + '</p></div>';
+                columns.forEach(function(col){
+                    var title = (col.title || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                    html += '<div class="footer-links"><h4>' + title + '</h4><ul>';
+                    (col.links || []).forEach(function(link){
+                        var href = link.href || '#';
+                if (href.indexOf('http') !== 0 && href.charAt(0) === '/') href = BASE + href;
+                        var label = (link.label || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        html += '<li><a href="' + href + '">' + label + '</a></li>';
+                    });
+                    html += '</ul></div>';
+                });
+                var el = document.getElementById('footer-dynamic');
+                if (el) el.innerHTML = html;
+                var santEdEl = document.getElementById('modal-sant-ed-body');
+                var kontakEl = document.getElementById('modal-kontakte-nou-body');
+                var politikEl = document.getElementById('modal-politik-body');
+                if (santEdEl) {
+                    var santEdTxt = (footer.support_sant_ed_content || 'Sant Èd — Kontni pa konfigirasyon.').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                    var btnAgent = '<button type="button" class="sant-ed-btn-agent" id="btn-pale-ak-ajan">Pale Ak Yon Ajan</button>';
+                    var btnVideo = '<a href="#" class="sant-ed-btn-video" id="btn-video-eksplikasyon" aria-label="Gade videyo eksplikasyon">Gade Videyo Eksplikasyon</a>';
+                    santEdTxt = santEdTxt.replace(/\[BOUTON : PALE AK YON AJAN\]/g, btnAgent).replace(/\[BOUTON : GADE VIDEYO EKSPLIKASYON\]/g, btnVideo);
+                    santEdEl.innerHTML = santEdTxt;
+                    var btnPale = document.getElementById('btn-pale-ak-ajan');
+                    if (btnPale) btnPale.addEventListener('click', function(){ document.getElementById('modal-support-message').classList.add('show'); document.body.style.overflow = 'hidden'; });
+                    var btnVideoEl = document.getElementById('btn-video-eksplikasyon');
+                    var videoUrl = (footer.support_video_url || '').trim();
+                    if (btnVideoEl) btnVideoEl.addEventListener('click', function(e){
+                        e.preventDefault();
+                        var placeholder = document.getElementById('modal-video-placeholder');
+                        var iframe = document.getElementById('modal-video-iframe');
+                        var videoDirect = document.getElementById('modal-video-direct');
+                        iframe.style.display = 'none';
+                        iframe.src = '';
+                        videoDirect.style.display = 'none';
+                        videoDirect.src = '';
+                        var showExplainer = true;
+                        if (videoUrl) {
+                            var embedUrl = videoUrl;
+                            if (videoUrl.indexOf('youtube.com/watch') !== -1) { var m = videoUrl.match(/v=([^&]+)/); embedUrl = m ? 'https://www.youtube.com/embed/' + m[1] : videoUrl; }
+                            else if (videoUrl.indexOf('youtu.be/') !== -1) { var id = videoUrl.split('youtu.be/')[1].split('?')[0]; embedUrl = 'https://www.youtube.com/embed/' + id; }
+                            else if (videoUrl.indexOf('vimeo.com/') !== -1) { var vm = videoUrl.match(/vimeo\.com\/(\d+)/); var vId = vm ? vm[1] : ''; embedUrl = vId ? 'https://player.vimeo.com/video/' + vId : videoUrl; }
+                            if (embedUrl.indexOf('youtube.com/embed') !== -1 || embedUrl.indexOf('vimeo.com/video') !== -1) {
+                                placeholder.style.display = 'none';
+                                iframe.style.display = 'block';
+                                iframe.src = embedUrl;
+                                showExplainer = false;
+                            } else if (/\.(mp4|webm|ogg)(\?|$)/i.test(videoUrl)) {
+                                placeholder.style.display = 'none';
+                                videoDirect.style.display = 'block';
+                                videoDirect.src = videoUrl;
+                                showExplainer = false;
+                            }
+                        }
+                        if (showExplainer) {
+                            placeholder.style.display = 'block';
+                            var slides = placeholder.querySelectorAll('.explainer-slide');
+                            var dotsContainer = document.getElementById('explainer-dots');
+                            dotsContainer.innerHTML = '';
+                            for (var i = 0; i < slides.length; i++) {
+                                var d = document.createElement('span');
+                                d.className = 'explainer-dot' + (i === 0 ? ' active' : '');
+                                d.setAttribute('data-index', i);
+                                d.addEventListener('click', (function(idx){ return function(){ goSlide(idx); }; })(i));
+                                dotsContainer.appendChild(d);
+                            }
+                            var currentSlide = 0;
+                            function goSlide(idx) {
+                                currentSlide = (idx + slides.length) % slides.length;
+                                slides.forEach(function(s,j){ s.classList.toggle('active', j === currentSlide); });
+                                dotsContainer.querySelectorAll('.explainer-dot').forEach(function(d,j){ d.classList.toggle('active', j === currentSlide); });
+                            }
+                            document.getElementById('explainer-prev').onclick = function(){ goSlide(currentSlide - 1); };
+                            document.getElementById('explainer-next').onclick = function(){ goSlide(currentSlide + 1); };
+                        }
+                        document.getElementById('modal-video-eksplikasyon').classList.add('show');
+                        document.body.style.overflow = 'hidden';
+                    });
+                }
+                if (kontakEl) kontakEl.textContent = (footer.support_kontak_content || 'Kontakte Nou — Kontni pa konfigirasyon.');
+                if (politikEl) politikEl.textContent = (footer.support_politik_content || 'Politik Konfidansyalite — Kontni pa konfigirasyon.');
+                var ASSETS = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? (API_BASE + '/landing-assets/') : (BASE + '/landing-assets/');
+                var imgRide = document.getElementById('img-chofe-passager');
+                var imgMoto = document.getElementById('img-moto');
+                var imgAuto = document.getElementById('img-auto');
+                if (imgRide && footer.image_ride_url) imgRide.src = footer.image_ride_url.indexOf('http') === 0 ? footer.image_ride_url : (ASSETS + footer.image_ride_url.replace(/^\//, ''));
+                if (imgMoto && footer.image_moto_url) imgMoto.src = footer.image_moto_url.indexOf('http') === 0 ? footer.image_moto_url : (ASSETS + footer.image_moto_url.replace(/^\//, ''));
+                if (imgAuto && footer.image_auto_url) imgAuto.src = footer.image_auto_url.indexOf('http') === 0 ? footer.image_auto_url : (ASSETS + footer.image_auto_url.replace(/^\//, ''));
+                var cp = document.getElementById('footer-copyright');
+                if (cp) cp.innerHTML = (footer.copyright || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                var playBtn = document.getElementById('store-play-btn');
+                var appBtn = document.getElementById('store-app-btn');
+                var apkBtn = document.getElementById('store-apk-btn');
+                if (playBtn && footer.play_store_url) playBtn.href = footer.play_store_url;
+                if (appBtn && footer.app_store_url) appBtn.href = footer.app_store_url;
+                if (apkBtn && footer.direct_apk_url && footer.direct_apk_url.trim()) {
+                    apkBtn.href = footer.direct_apk_url.trim();
+                    apkBtn.style.display = '';
+                }
+                var playUrl = (footer.play_store_url || 'https://play.google.com/store/apps/details?id=com.taptapgo.app').trim();
+                var appUrl = (footer.app_store_url || 'https://apps.apple.com/app/taptapgo').trim();
+                function getDownloadUrl() {
+                    var ua = navigator.userAgent || navigator.vendor || '';
+                    if (/android/i.test(ua) && playUrl) return playUrl;
+                    if (/iPad|iPhone|iPod/i.test(ua) && !window.MSStream && appUrl) return appUrl;
+                    return null;
+                }
+                function handleDownloadClick(e) {
+                    var url = getDownloadUrl();
+                    if (url) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        window.open(url, '_blank', 'noopener');
+                        return false;
+                    }
+                }
+                function handleSouNouDownloadClick(e) {
+                    var url = getDownloadUrl();
+                    if (url) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        window.open(url, '_blank', 'noopener');
+                        return false;
+                    }
+                    e.preventDefault();
+                    document.querySelectorAll('.modal-overlay.show').forEach(function(m){ m.classList.remove('show'); });
+                    document.body.style.overflow = '';
+                    var t = document.querySelector('#aplikasyon');
+                    if (t) t.scrollIntoView({ behavior: 'smooth' });
+                }
+                var ctaDownload = document.getElementById('cta-download-btn');
+                var heroDownload = document.getElementById('hero-download-btn');
+                var souNouDownload = document.getElementById('sou-nou-btn-download');
+                if (ctaDownload) { ctaDownload.addEventListener('click', handleDownloadClick, true); }
+                if (heroDownload) { heroDownload.addEventListener('click', handleDownloadClick, true); }
+                if (souNouDownload) { souNouDownload.addEventListener('click', handleSouNouDownloadClick, true); }
+            }).catch(function(){});
+        })();
+        window.addEventListener('scroll', () => document.getElementById('header').classList.toggle('scrolled', window.scrollY > 50));
+        document.addEventListener('click', function(e) { var a = e.target.closest('a[href^="#"]'); if (!a) return; var h = a.getAttribute('href'); if (h === '#') return; e.preventDefault(); var modalMap = { '#sou-nou': 'modal-sou-nou', '#sant-ed': 'modal-sant-ed', '#kontakte-nou': 'modal-kontakte-nou', '#politik': 'modal-politik' }; if (modalMap[h]) { document.getElementById(modalMap[h]).classList.add('show'); document.body.style.overflow = 'hidden'; return; } document.querySelectorAll('.modal-overlay.show').forEach(function(m){ m.classList.remove('show'); }); document.body.style.overflow = ''; var t = document.querySelector(h); if (t) t.scrollIntoView({ behavior: 'smooth' }); });
+        function closeAnyModal() {
+            var videoModal = document.getElementById('modal-video-eksplikasyon');
+            if (videoModal && videoModal.classList.contains('show')) {
+                var ifr = document.getElementById('modal-video-iframe');
+                var vd = document.getElementById('modal-video-direct');
+                if (ifr) ifr.src = '';
+                if (vd) vd.src = '';
+            }
+            document.querySelectorAll('.modal-overlay.show').forEach(function(m){ m.classList.remove('show'); });
+            document.body.style.overflow = '';
+        }
+        document.querySelectorAll('.modal-close').forEach(function(btn){ btn.addEventListener('click', closeAnyModal); });
+        document.querySelectorAll('.modal-overlay').forEach(function(ov){ ov.addEventListener('click', function(e){ if (e.target === ov) closeAnyModal(); }); });
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeAnyModal(); });
+        const observer = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); }), { threshold: 0.1 });
+        document.querySelectorAll('.animate-on-scroll').forEach(el => observer.observe(el));
+        document.getElementById('whitelabelForm').addEventListener('submit', function(e){
+            e.preventDefault();
+            var f = e.target;
+            var btn = f.querySelector('.submit-btn');
+            var API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:8000' : (window.location.origin.includes('taptapgoht') ? 'https://taptapgoht.com' : window.location.origin);
+            var body = { company: f.company.value.trim(), name: f.name.value.trim(), phone: f.phone.value.trim(), email: f.email.value.trim(), zone: f.zone.value.trim(), message: (f.message && f.message.value) ? f.message.value.trim() : '', website: (f.website && f.website.value) ? f.website.value.trim() : '', drivers: (f.drivers && f.drivers.value) ? parseInt(f.drivers.value, 10) || null : null };
+            if (btn) btn.disabled = true;
+            fetch(API_BASE + '/api/landing/whitelabel-request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function(r){ return r.json(); }).then(function(d){
+                if (d.success) { document.getElementById('successMessage').classList.add('show'); f.reset(); setTimeout(function(){ document.getElementById('successMessage').classList.remove('show'); }, 5000); }
+                else { alert('Gen yon erè. Tanpri eseye ankò.'); }
+            }).catch(function(){ alert('Gen yon erè. Tanpri eseye ankò.'); }).finally(function(){ if (btn) btn.disabled = false; });
+        });
+        (function(){
+            var API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:8000' : (window.location.origin.includes('taptapgoht') ? 'https://taptapgoht.com' : window.location.origin);
+            var form = document.getElementById('supportMessageForm');
+            var successEl = document.getElementById('supportMessageSuccess');
+            if (form) form.addEventListener('submit', function(e){
+                e.preventDefault();
+                var f = e.target;
+                var btn = f.querySelector('.submit-btn');
+                var body = { name: (f.name && f.name.value) ? f.name.value.trim() : '', phone: (f.phone && f.phone.value) ? f.phone.value.trim() : '', email: (f.email && f.email.value) ? f.email.value.trim() : '', message: (f.message && f.message.value) ? f.message.value.trim() : '' };
+                if (!body.name || !body.phone || !body.email || !body.message) { alert('Tanpri ranpli tout chan yo.'); return; }
+                if (btn) btn.disabled = true;
+                fetch(API_BASE + '/api/landing/support-message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function(r){
+                    return r.json().then(function(d){ return { ok: r.ok, status: r.status, data: d }; });
+                }).then(function(res){
+                    if (res.data && res.data.success) { if (successEl) successEl.classList.add('show'); f.reset(); setTimeout(function(){ if (successEl) successEl.classList.remove('show'); document.getElementById('modal-support-message').classList.remove('show'); document.body.style.overflow = ''; }, 3000); }
+                    else {
+                        var msg = 'Gen yon erè. Tanpri eseye ankò.';
+                        if (res.data && res.data.detail) {
+                            if (Array.isArray(res.data.detail) && res.data.detail[0] && res.data.detail[0].msg) msg = res.data.detail[0].msg;
+                            else if (typeof res.data.detail === 'string') msg = res.data.detail;
+                        }
+                        if (res.status === 422) msg = msg || 'Verifye chan yo — imèl la dwe gen @ (egzanp: non@imel.com).';
+                        alert(msg);
+                    }
+                }).catch(function(e){ alert('Gen yon erè. Tanpri verifye si ou gen entènèt epi eseye ankò.'); }).finally(function(){ if (btn) btn.disabled = false; });
+            });
+        })();
+        (function(){
+            var btn = document.querySelector('.mobile-menu-btn');
+            var navLinks = document.querySelector('.nav-links');
+            var header = document.getElementById('header');
+            function toggleMenu() { navLinks.classList.toggle('open'); document.body.style.overflow = navLinks.classList.contains('open') ? 'hidden' : ''; }
+            function closeMenu() { navLinks.classList.remove('open'); document.body.style.overflow = ''; }
+            if (btn) btn.addEventListener('click', function(e){ e.stopPropagation(); toggleMenu(); });
+            if (navLinks) navLinks.querySelectorAll('a').forEach(function(a){ a.addEventListener('click', closeMenu); });
+            document.addEventListener('click', function(e){ if (navLinks.classList.contains('open') && !btn.contains(e.target) && !navLinks.contains(e.target)) closeMenu(); });
+            window.addEventListener('resize', function(){ if (window.innerWidth > 768) closeMenu(); });
+        })();
+    </script>
+</body>
+</html>

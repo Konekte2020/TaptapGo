@@ -58,6 +58,15 @@ export default function AdminLayout() {
         }}
       />
       <Tabs.Screen
+        name="support-messages"
+        options={{
+          title: 'Mesaj Sipò',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="chatbubbles" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profil',

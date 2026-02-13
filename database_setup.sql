@@ -259,6 +259,11 @@ CREATE TABLE IF NOT EXISTS builds (
 CREATE INDEX IF NOT EXISTS idx_builds_brand_id ON builds(brand_id);
 CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
 
+-- EAS Build (cloud) + EAS Submit
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS eas_build_id TEXT;
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS submit_status TEXT;
+ALTER TABLE builds ADD COLUMN IF NOT EXISTS submit_track TEXT;
+
 ALTER TABLE builds ENABLE ROW LEVEL SECURITY;
 
 -- Create policies to allow access (for development - tighten in production)

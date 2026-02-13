@@ -1,12 +1,13 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import List, Optional, Dict, Any, Tuple
 import uuid
 from datetime import datetime, timedelta
@@ -17,16 +18,39 @@ import base64
 from supabase import create_client, Client
 import json
 import math
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from services.build_service import BuildService
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# Supabase configuration
-SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://puncojujdabpljgbzkxg.supabase.co')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1bmNvanVqZGFicGxqZ2J6a3hnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwODExMzEsImV4cCI6MjA4NTY1NzEzMX0.-hjhJL4ySnArNLE1QCCqdVtA9XFw_aGSpgm_LIjpHho')
-JWT_SECRET = os.environ.get('JWT_SECRET', 'taptapgo-secret-key-2025')
-JWT_ALGORITHM = 'HS256'
+
+def _load_politik_content() -> str:
+    """Charge la politique de confidentialité depuis le fichier texte."""
+    try:
+        p = ROOT_DIR / "support_politik_content.txt"
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    return "Politik Konfidansyalite — TapTapGo\n\nKontni pa konfigirasyon."
+
+# Configuration requise (pas de valeurs par défaut en production)
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+JWT_SECRET = os.environ.get('JWT_SECRET')
+if not all([SUPABASE_URL, SUPABASE_KEY, JWT_SECRET]):
+    raise RuntimeError(
+        "Variables d'environnement manquantes: SUPABASE_URL, SUPABASE_KEY, JWT_SECRET. "
+        "Voir backend/.env.example et définir un fichier .env."
+    )
+JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
+
+# CORS: en production définir CORS_ORIGINS (ex: https://app.example.com,https://admin.example.com)
+_cors_raw = (os.environ.get('CORS_ORIGINS') or '*').strip()
+CORS_ORIGINS = ['*'] if _cors_raw == '*' else [o.strip() for o in _cors_raw.split(',') if o.strip()]
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -119,6 +143,7 @@ class UserRegisterDriver(BaseModel):
     vehicle_photo: Optional[str] = None  # base64
     license_photo: Optional[str] = None  # base64
     vehicle_papers: Optional[str] = None  # base64
+    casier_judiciaire: Optional[str] = None  # base64 — obligatwa pou pase an liy
     profile_photo: Optional[str] = None  # base64
     password: str
     admin_id: Optional[str] = None
@@ -168,9 +193,15 @@ class PasswordChange(BaseModel):
     new_password: str
 
 class PricingUpdate(BaseModel):
-    base_fare: float
-    price_per_km: float
-    price_per_min: float
+    base_fare: Optional[float] = None
+    price_per_km: Optional[float] = None
+    price_per_min: Optional[float] = None
+    base_fare_moto: Optional[float] = None
+    base_fare_car: Optional[float] = None
+    price_per_km_moto: Optional[float] = None
+    price_per_km_car: Optional[float] = None
+    price_per_min_moto: Optional[float] = None
+    price_per_min_car: Optional[float] = None
     commission_rate: Optional[float] = None
 
 class AdminCreate(BaseModel):
@@ -203,11 +234,17 @@ class AdminUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 class AdminPricingUpdate(BaseModel):
-    base_fare: float
-    price_per_km: float
-    price_per_min: float
+    base_fare: Optional[float] = None
+    price_per_km: Optional[float] = None
+    price_per_min: Optional[float] = None
+    base_fare_moto: Optional[float] = None
+    base_fare_car: Optional[float] = None
+    price_per_km_moto: Optional[float] = None
+    price_per_km_car: Optional[float] = None
+    price_per_min_moto: Optional[float] = None
+    price_per_min_car: Optional[float] = None
     surge_multiplier: float = 1.0
-    commission_rate: float
+    commission_rate: float = 0
 
 class AdminPaymentMethodsUpdate(BaseModel):
     moncash_enabled: bool = False
@@ -234,6 +271,11 @@ class BuildRequest(BaseModel):
     tertiary_color: str
     local_only: Optional[bool] = False
     build_mode: Optional[str] = "local"  # local | cloud
+
+
+class BuildSubmitRequest(BaseModel):
+    build_id: str
+    track: Optional[str] = "internal"  # internal | alpha | beta | production
 
 class ComplaintCreate(BaseModel):
     target_user_type: str  # 'driver' or 'passenger'
@@ -379,29 +421,40 @@ def generate_otp() -> str:
     """Generate mock OTP for development"""
     return "123456"  # Mock OTP
 
-def calculate_ride_price(city_data: dict, distance_km: float, duration_min: float, pricing_data: Optional[dict] = None) -> dict:
-    """Calculate ride price based on pricing settings"""
+def calculate_ride_price(
+    city_data: dict,
+    distance_km: float,
+    duration_min: float,
+    pricing_data: Optional[dict] = None,
+    vehicle_type: str = "moto",
+) -> dict:
+    """Calculate ride price. vehicle_type: 'moto' or 'car'. Uses moto/car fields when present."""
+    is_car = (vehicle_type or "moto").lower() == "car"
+    surge = pricing_data.get("surge_multiplier", city_data.get("surge_multiplier", 1.0)) if pricing_data else city_data.get("surge_multiplier", 1.0)
+
     if pricing_data:
-        base = pricing_data.get('base_fare', 0)
-        per_km = pricing_data.get('price_per_km', 0)
-        per_min = pricing_data.get('price_per_min', 0)
-        surge = pricing_data.get('surge_multiplier', city_data.get('surge_multiplier', 1.0))
+        if is_car:
+            base = float(pricing_data.get("base_fare_car") if pricing_data.get("base_fare_car") is not None else pricing_data.get("base_fare", 0))
+            per_km = float(pricing_data.get("price_per_km_car") if pricing_data.get("price_per_km_car") is not None else pricing_data.get("price_per_km", 0))
+            per_min = float(pricing_data.get("price_per_min_car") if pricing_data.get("price_per_min_car") is not None else pricing_data.get("price_per_min", 0))
+        else:
+            base = float(pricing_data.get("base_fare_moto") if pricing_data.get("base_fare_moto") is not None else pricing_data.get("base_fare", 0))
+            per_km = float(pricing_data.get("price_per_km_moto") if pricing_data.get("price_per_km_moto") is not None else pricing_data.get("price_per_km", 0))
+            per_min = float(pricing_data.get("price_per_min_moto") if pricing_data.get("price_per_min_moto") is not None else pricing_data.get("price_per_min", 0))
     else:
-        base = city_data.get('base_fare_moto', 50)
-        per_km = city_data.get('price_per_km_moto', 25)
-        per_min = city_data.get('price_per_min_moto', 5)
-        surge = city_data.get('surge_multiplier', 1.0)
-    
+        base = float(city_data.get("base_fare_car", 100) if is_car else city_data.get("base_fare_moto", 50))
+        per_km = float(city_data.get("price_per_km_car", 50) if is_car else city_data.get("price_per_km_moto", 25))
+        per_min = float(city_data.get("price_per_min_car", 10) if is_car else city_data.get("price_per_min_moto", 5))
+
     subtotal = base + (per_km * distance_km) + (per_min * duration_min)
     total = subtotal * surge
-    
     return {
-        'base_fare': base,
-        'distance_fare': per_km * distance_km,
-        'time_fare': per_min * duration_min,
-        'surge_multiplier': surge,
-        'subtotal': subtotal,
-        'total': round(total, 2)
+        "base_fare": base,
+        "distance_fare": per_km * distance_km,
+        "time_fare": per_min * duration_min,
+        "surge_multiplier": surge,
+        "subtotal": subtotal,
+        "total": round(total, 2),
     }
 
 def generate_test_coords(base_lat: float, base_lng: float, min_km: float = 1.0, max_km: float = 4.0) -> Tuple[float, float]:
@@ -518,10 +571,16 @@ async def init_database():
             updated_at TIMESTAMP DEFAULT NOW()
         );
 
-        -- Ensure admin pricing columns exist
+        -- Ensure admin pricing columns exist (moto + machin)
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS base_fare DECIMAL DEFAULT 0;
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_km DECIMAL DEFAULT 0;
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_min DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS base_fare_moto DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS base_fare_car DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_km_moto DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_km_car DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_min_moto DECIMAL DEFAULT 0;
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS price_per_min_car DECIMAL DEFAULT 0;
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS surge_multiplier DECIMAL DEFAULT 1.0;
 
         -- SubAdmins table (admin assistants)
@@ -567,7 +626,7 @@ async def init_database():
             updated_at TIMESTAMP DEFAULT NOW()
         );
 
-        -- Pricing settings (platform vs white-label)
+        -- Pricing settings (platform vs white-label) — moto + machin
         CREATE TABLE IF NOT EXISTS pricing_settings (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             scope TEXT UNIQUE NOT NULL,
@@ -577,6 +636,12 @@ async def init_database():
             commission_rate DECIMAL DEFAULT 0,
             updated_at TIMESTAMP DEFAULT NOW()
         );
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS base_fare_moto DECIMAL DEFAULT 0;
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS base_fare_car DECIMAL DEFAULT 0;
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS price_per_km_moto DECIMAL DEFAULT 0;
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS price_per_km_car DECIMAL DEFAULT 0;
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS price_per_min_moto DECIMAL DEFAULT 0;
+        ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS price_per_min_car DECIMAL DEFAULT 0;
 
         -- Admin payment methods (global, per admin)
         CREATE TABLE IF NOT EXISTS admin_payment_methods (
@@ -689,6 +754,13 @@ async def init_database():
 @api_router.get("/")
 async def root():
     return {"message": "TapTapGo API v1.0", "status": "running"}
+
+
+@api_router.get("/health")
+async def health():
+    """Health check pour load balancers et surveillance (uptime)."""
+    return {"status": "ok"}
+
 
 @api_router.post("/otp/send")
 async def send_otp(request: OTPRequest):
@@ -926,6 +998,7 @@ async def register_driver(data: UserRegisterDriver):
             "vehicle_photo": data.vehicle_photo,
             "license_photo": data.license_photo,
             "vehicle_papers": data.vehicle_papers,
+            "casier_judiciaire": data.casier_judiciaire,
             "profile_photo": data.profile_photo,
             "status": "pending",  # Needs admin approval
             "is_online": False,
@@ -1099,7 +1172,14 @@ async def create_admin(data: AdminCreate, current_user: dict = Depends(get_curre
     except HTTPException:
         raise
     except Exception as e:
+        err = str(e).lower()
         logger.error(f"Admin creation error: {e}")
+        if "unique" in err or "duplicate" in err or "already exists" in err:
+            if "email" in err or "admins_email" in err:
+                raise HTTPException(status_code=400, detail="Imèl sa a deja itilize. Chwazi yon lòt imèl.")
+            if "phone" in err or "admins_phone" in err:
+                raise HTTPException(status_code=400, detail="Nimewo telefòn sa a deja itilize. Chwazi yon lòt nimewo.")
+            raise HTTPException(status_code=400, detail="Imèl oswa nimewo telefòn sa a deja itilize pou yon lòt mak.")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/admin/subadmins")
@@ -1454,12 +1534,26 @@ async def get_pricing(scope: str = Query(...), current_user: dict = Depends(get_
     
     try:
         result = supabase.table("pricing_settings").select("*").eq("scope", scope).execute()
-        pricing = result.data[0] if result.data else {
+        raw = result.data[0] if result.data else {}
+        def _v(key, fallback=None, default=0):
+            val = raw.get(key)
+            if val is not None:
+                return float(val)
+            if fallback and raw.get(fallback) is not None:
+                return float(raw[fallback])
+            return default
+        pricing = {
             "scope": scope,
-            "base_fare": 0,
-            "price_per_km": 0,
-            "price_per_min": 0,
-            "commission_rate": 0
+            "base_fare": _v("base_fare", default=0),
+            "price_per_km": _v("price_per_km", default=0),
+            "price_per_min": _v("price_per_min", default=0),
+            "base_fare_moto": _v("base_fare_moto", "base_fare", 0),
+            "base_fare_car": _v("base_fare_car", "base_fare", 0),
+            "price_per_km_moto": _v("price_per_km_moto", "price_per_km", 0),
+            "price_per_km_car": _v("price_per_km_car", "price_per_km", 0),
+            "price_per_min_moto": _v("price_per_min_moto", "price_per_min", 0),
+            "price_per_min_car": _v("price_per_min_car", "price_per_min", 0),
+            "commission_rate": _v("commission_rate", default=0),
         }
         return {"pricing": pricing}
     except Exception as e:
@@ -1477,40 +1571,61 @@ async def update_pricing(scope: str = Query(...), data: PricingUpdate = None, cu
     try:
         if data is None:
             raise HTTPException(status_code=400, detail="Pricing data required")
-        if data.base_fare < 0 or data.price_per_km < 0 or data.price_per_min < 0:
-            raise HTTPException(status_code=400, detail="Prices must be >= 0")
+        def _check(v, name):
+            if v is not None and v < 0:
+                raise HTTPException(status_code=400, detail=f"{name} must be >= 0")
+        for k in ("base_fare", "price_per_km", "price_per_min", "base_fare_moto", "base_fare_car",
+                  "price_per_km_moto", "price_per_km_car", "price_per_min_moto", "price_per_min_car"):
+            _check(getattr(data, k, None), k)
         if data.commission_rate is not None and (data.commission_rate < 0 or data.commission_rate > 100):
             raise HTTPException(status_code=400, detail="Commission must be between 0 and 100")
-        payload = {
-            "scope": scope,
-            "base_fare": data.base_fare,
-            "price_per_km": data.price_per_km,
-            "price_per_min": data.price_per_min,
-            "commission_rate": data.commission_rate if data.commission_rate is not None else 0,
-            "updated_at": datetime.utcnow().isoformat()
-        }
+        payload = {"scope": scope, "updated_at": datetime.utcnow().isoformat()}
+        for key in ("base_fare", "price_per_km", "price_per_min", "base_fare_moto", "base_fare_car",
+                    "price_per_km_moto", "price_per_km_car", "price_per_min_moto", "price_per_min_car", "commission_rate"):
+            v = getattr(data, key, None)
+            if v is not None:
+                payload[key] = v
+            elif key == "commission_rate":
+                payload[key] = data.commission_rate if data.commission_rate is not None else 0
         result = supabase.table("pricing_settings").upsert(payload, on_conflict="scope").execute()
         pricing = result.data[0] if result.data else payload
         return {"pricing": pricing}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Pricing update error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.get("/admin/pricing")
 async def get_admin_pricing(current_user: dict = Depends(get_current_user)):
-    """Get admin pricing (global, not per city)"""
+    """Get admin pricing (global): moto + machin (base, per km, per min)"""
     if current_user['user_type'] != 'admin':
         raise HTTPException(status_code=403, detail="Not authorized")
     try:
         result = supabase.table("admins").select(
-            "base_fare,price_per_km,price_per_min,surge_multiplier,commission_rate"
+            "base_fare,price_per_km,price_per_min,base_fare_moto,base_fare_car,price_per_km_moto,price_per_km_car,price_per_min_moto,price_per_min_car,surge_multiplier,commission_rate"
         ).eq("id", current_user['user_id']).execute()
-        pricing = result.data[0] if result.data else {
-            "base_fare": 0,
-            "price_per_km": 0,
-            "price_per_min": 0,
-            "surge_multiplier": 1.0,
-            "commission_rate": 0
+        raw = result.data[0] if result.data else {}
+        def _v(key: str, fallback_key: Optional[str] = None, default: float = 0):
+            val = raw.get(key)
+            if val is not None:
+                return float(val)
+            if fallback_key:
+                v2 = raw.get(fallback_key)
+                return float(v2) if v2 is not None else default
+            return default
+        pricing = {
+            "base_fare": _v("base_fare", default=0),
+            "price_per_km": _v("price_per_km", default=0),
+            "price_per_min": _v("price_per_min", default=0),
+            "base_fare_moto": _v("base_fare_moto", "base_fare", 0),
+            "base_fare_car": _v("base_fare_car", "base_fare", 0),
+            "price_per_km_moto": _v("price_per_km_moto", "price_per_km", 0),
+            "price_per_km_car": _v("price_per_km_car", "price_per_km", 0),
+            "price_per_min_moto": _v("price_per_min_moto", "price_per_min", 0),
+            "price_per_min_car": _v("price_per_min_car", "price_per_min", 0),
+            "surge_multiplier": _v("surge_multiplier", default=1.0),
+            "commission_rate": _v("commission_rate", default=0),
         }
         return {"pricing": pricing}
     except Exception as e:
@@ -1519,28 +1634,33 @@ async def get_admin_pricing(current_user: dict = Depends(get_current_user)):
 
 @api_router.put("/admin/pricing")
 async def update_admin_pricing(data: AdminPricingUpdate, current_user: dict = Depends(get_current_user)):
-    """Update admin pricing (global, not per city)"""
+    """Update admin pricing (global): moto + machin (base, per km, per min)"""
     if current_user['user_type'] != 'admin':
         raise HTTPException(status_code=403, detail="Not authorized")
-    if data.base_fare < 0 or data.price_per_km < 0 or data.price_per_min < 0:
-        raise HTTPException(status_code=400, detail="Prices must be >= 0")
-    if data.commission_rate < 0 or data.commission_rate > 100:
+    def _check(v, name):
+        if v is not None and v < 0:
+            raise HTTPException(status_code=400, detail=f"{name} must be >= 0")
+    for k in ("base_fare", "price_per_km", "price_per_min", "base_fare_moto", "base_fare_car",
+              "price_per_km_moto", "price_per_km_car", "price_per_min_moto", "price_per_min_car"):
+        _check(getattr(data, k, None), k)
+    if data.commission_rate is not None and (data.commission_rate < 0 or data.commission_rate > 100):
         raise HTTPException(status_code=400, detail="Commission must be between 0 and 100")
     if data.surge_multiplier < 1:
         raise HTTPException(status_code=400, detail="Surge must be >= 1")
     try:
-        payload = {
-            "base_fare": data.base_fare,
-            "price_per_km": data.price_per_km,
-            "price_per_min": data.price_per_min,
-            "surge_multiplier": data.surge_multiplier,
-            "commission_rate": data.commission_rate,
-            "updated_at": datetime.utcnow().isoformat()
-        }
+        payload = {"updated_at": datetime.utcnow().isoformat()}
+        for key in ("base_fare", "price_per_km", "price_per_min", "base_fare_moto", "base_fare_car",
+                    "price_per_km_moto", "price_per_km_car", "price_per_min_moto", "price_per_min_car",
+                    "surge_multiplier", "commission_rate"):
+            v = getattr(data, key, None)
+            if v is not None:
+                payload[key] = v
         result = supabase.table("admins").update(payload).eq("id", current_user['user_id']).execute()
         if result.data:
             return {"pricing": result.data[0]}
         raise HTTPException(status_code=404, detail="Admin not found")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Admin pricing update error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1856,14 +1976,20 @@ async def update_driver_online_status(driver_id: str, is_online: bool, current_u
     
     try:
         if is_online:
-            status_lookup = supabase.table("drivers").select("status").eq("id", driver_id).execute()
-            if not status_lookup.data:
+            driver_lookup = supabase.table("drivers").select("status,casier_judiciaire").eq("id", driver_id).execute()
+            if not driver_lookup.data:
                 raise HTTPException(status_code=404, detail="Driver not found")
-            driver_status = status_lookup.data[0].get("status")
-            if driver_status != "approved":
+            driver = driver_lookup.data[0]
+            if driver.get("status") != "approved":
                 raise HTTPException(
                     status_code=403,
                     detail="Kont ou an poko apwouve. Kontakte sèvis sipò si ou panse tan an twòp."
+                )
+            casier = driver.get("casier_judiciaire")
+            if not casier or not str(casier).strip():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Ou dwe ajoute kasye jidisyè w (casier judiciaire) nan Dokiman avan w ka pase an liy. Ale nan Profil > Dokiman."
                 )
         result = supabase.table("drivers").update({"is_online": is_online}).eq("id", driver_id).execute()
         if result.data:
@@ -2298,7 +2424,7 @@ async def estimate_ride(
             admin_id = passenger.data[0].get('admin_id') if passenger.data else None
             if admin_id:
                 admin_pricing = supabase.table("admins").select(
-                    "base_fare,price_per_km,price_per_min,surge_multiplier"
+                    "base_fare,price_per_km,price_per_min,base_fare_moto,base_fare_car,price_per_km_moto,price_per_km_car,price_per_min_moto,price_per_min_car,surge_multiplier"
                 ).eq("id", admin_id).execute()
                 if admin_pricing.data:
                     pricing_data = admin_pricing.data[0]
@@ -2311,7 +2437,8 @@ async def estimate_ride(
             city_data,
             data.estimated_distance,
             data.estimated_duration,
-            pricing_data
+            pricing_data,
+            data.vehicle_type,
         )
         
         return {
@@ -3014,7 +3141,8 @@ async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_
                 'plate_number',
                 'vehicle_photo',
                 'license_photo',
-                'vehicle_papers'
+                'vehicle_papers',
+                'casier_judiciaire'
             })
         if current_user['user_type'] == 'passenger':
             allowed_fields.update({'moncash_enabled', 'moncash_phone', 'natcash_enabled', 'natcash_phone'})
@@ -3107,7 +3235,26 @@ async def generate_build(data: BuildRequest, current_user: dict = Depends(get_cu
     except HTTPException:
         raise
     except Exception as e:
+        err = str(e)
+        if "Gen yon build" in err or "build k ap mache" in err:
+            raise HTTPException(status_code=409, detail=err)
         logger.error(f"Build generation error: {e}")
+        raise HTTPException(status_code=500, detail=err)
+
+
+@api_router.post("/superadmin/builds/{build_id}/cancel")
+async def cancel_build(build_id: str, current_user: dict = Depends(get_current_user)):
+    """Anile yon build k ap mache."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(
+            status_code=403,
+            detail="Se SuperAdmin sèlman ki ka anile yon build.",
+        )
+    try:
+        build_service.request_cancel(build_id)
+        return {"success": True, "message": "Demann anilasyon voye. Build la ap sispann byento."}
+    except Exception as e:
+        logger.error(f"Cancel build error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -3173,11 +3320,29 @@ async def download_build(build_id: str, current_user: dict = Depends(get_current
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.post("/superadmin/builds/submit")
+async def submit_build_to_play_store(data: BuildSubmitRequest, current_user: dict = Depends(get_current_user)):
+    """Soumèt un build EAS (cloud) nan Google Play Store"""
+    if current_user['user_type'] != 'superadmin':
+        raise HTTPException(status_code=403, detail="Only SuperAdmin can submit builds")
+    try:
+        result = build_service.submit_build_to_play_store(data.build_id, data.track or "internal")
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Submit build error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post("/superadmin/builds/cache/clear")
 async def clear_build_cache(current_user: dict = Depends(get_current_user)):
     """Netwaye cache build pou SuperAdmin"""
-    if current_user['user_type'] != 'superadmin':
-        raise HTTPException(status_code=403, detail="Only SuperAdmin can clear build cache")
+    if current_user.get('user_type') != 'superadmin':
+        raise HTTPException(
+            status_code=403,
+            detail="Se SuperAdmin sèlman ki ka netwaye cache build la. Konekte kòm SuperAdmin."
+        )
     try:
         result = build_service.clear_build_cache()
         return {"success": True, **result}
@@ -3198,13 +3363,558 @@ async def clear_failed_builds(brand_id: Optional[str] = None, current_user: dict
         logger.error(f"Clear failed builds error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============== LANDING PAGE (SuperAdmin gère tout) ==============
+
+LANDING_DEFAULTS = {
+    "hero_title": "Transpò <span class=\"highlight\">Rapid</span><br>Pou Tout <span class=\"highlight\">Ayiti</span>",
+    "hero_subtitle": "Mande yon moto oswa machin kounye a. Pri klè, trajè rapid, chofè verifye. TapTapGo se sèvis transpò ki fèt pou nou!",
+    "hero_btn1": "Telechaje Kounye A",
+    "hero_btn2": "Mande Marque Pwop Ou",
+    "sou_nou_content": "🚗 SOU NOU — Transpò Ki Fèt Pou Ayiti\n\n═══════════════════════════════════════\n\n🏆 ISTWA NOU : YON RÈV KI VIN REYALITE\n\nAne 2024, nou te wè yon pwoblèm ki afekte tout Ayisyen chak jou :\n❌ Pri transpò pa klè — ou pa janm konnen konbyen w ap peye\n❌ Sekirite pa asire — ou pa konnen ki moun k ap mennen w\n❌ Tan pèdi — 30 minit, 1 èdtan pou jwenn yon machin\n❌ Chofè san rekonpans jis pou travay yo\n\nNou te di : \"Sa dwe chanje.\" ✊\n\nJodi a, TapTapGo se platfòm pou transpò sekirize nan Ayiti. Nou ap grandi chak jou pou bay pi bon sèvis.\n\n═══════════════════════════════════════\n\n⚡ SA NOU FÈ — TRANSPÒ MODÈN NAN MEN W\n\nYon sèl app, tout solisyon :\n\n🎯 POU PASAJÈ :\n   ✓ Mande yon tras an 30 segonn\n   ✓ Wè pri FIX AVAN w monte (0 sipriz)\n   ✓ Suiv chofè w an TAN REYÈL sou kat la\n   ✓ Peye jan w vle : MonCash, NatCash, Cash, Kart Kredi\n   ✓ Siyal SOS an ka ijans\n\n🎯 POU CHOFÈ :\n   ✓ Aksepte kliyan 24/7 san bezwen tann nan lari\n   ✓ Touche lajan w dirèk, pa gen entèmedyè\n   ✓ Wè itinirè a avan w aksepte\n   ✓ Asirans ak sipò legal inkli\n\n═══════════════════════════════════════\n\n🛡️ SEKIRITE — PWIORITÉ NIMEWO 1\n\nNou pa jwe ak sekirite w :\n\n✅ TOUT chofè verifye (ID, Kasye Jidisyè, Fòmasyon)\n✅ Sistèm nòt 5 zetwal\n✅ Bouton SOS konekte ak fòs lòd\n✅ Tout tras anrejistre pou sekirite w\n✅ Sipò 24/7 si gen nenpòt pwoblèm\n\n═══════════════════════════════════════\n\n💰 TRANPARENS TOTAL — 0 KACH, 0 SIPRIZ\n\nAvan w monte, ou konnen EGZAKTEMAN :\n→ Konbyen w ap peye (pa gen ogmantasyon misteryez)\n→ Konbyen tan tras la ap pran\n→ Ki moun k ap mennen w (foto + non)\n→ Ki machin k ap vin pran w (plak + koulè)\n\n═══════════════════════════════════════\n\n🌟 POUKISA AYISYEN FÈ NOU KONFYANS\n\n\"Anvan, mwen te pè pran machin nan lari. Avèk TapTapGo, mwen ka voye pitit mwen lekòl an sekirite.\"\n— Marie J., Pòtoprens\n\n\"Mwen genyen plis kliyan kounye a. TapTapGo chanje lavi m.\"\n— Jean C., Chofè\n\n═══════════════════════════════════════\n\n🇭🇹 FÈT POU AYITI, PA AYISYEN\n\nNou pa se yon kopi aplikasyon etranje — nou konstwi TapTapGo spesyalman pou reyalite Ayiti :\n\n✓ Konpatib ak TOUT telefòn (pa bezwen iPhone)\n✓ Sipò nan 3 lang : Kreyòl, Fransè, Anglè\n✓ Peye ak lajan kach aksepte\n✓ Ekip sipò ki pale KREYÒL ak konprann kilti nou\n\n═══════════════════════════════════════\n\n🎁 KÒMANSE JODI A — 0 FRÈK\n\n📱 Telechaje app la GRATIS\n🎉 Premye tras ou : -20% avèk kòd BYENVINI\n🚀 Enskripsyon pran 2 minit\n\n═══════════════════════════════════════\n\n💬 KONTAKTE NOU\n\n📞 WhatsApp : [+509 XXXX XXXX]\n📧 Email : support@taptapgo.ht\n📍 Biwo : [Adrès]\n🕐 Disponib : 24/7\n\nPaske deplase pa dwe yon kalvè — li dwe yon dwa. 🇭🇹✨",
+    "problem_title": "Rezon Ki Fè Ou Bezwen TapTapGo",
+    "problem_subtitle": "Nou konprann pwoblèm transpò nan peyi a. Se pou sa nou kreye yon solisyon ki travay pou ou.",
+    "problem_text": "Deplase nan Ayiti difisil. Ou pa konnen konbyen w ap peye, ou tann lontan, epi ou pa janm santi ou an sekirite. Pri yo pa klè, chofè yo pa disponib, epi transpò pa òganize byen.",
+    "solution_text": "Ak TapTapGo, ou wè pri a avan w konfime, ou suiv chofè a an tan reyèl, epi ou peye avèk MonCash, NatCash oswa kach. Tout bagay klè, rapid, epi an sekirite. Transpò ki fèt pou Ayiti!",
+    "features_title": "Sa Ou Ka Fè Ak TapTapGo",
+    "features_subtitle": "Dekouvri tout fonksyonalite ki fè TapTapGo diferan",
+    "feature_1_title": "Moto oswa Machin",
+    "feature_1_text": "Chwazi ant moto pou trajè rapid oswa machin pou plis konfò. Ou deside!",
+    "feature_2_title": "Pri Transparan",
+    "feature_2_text": "Wè konbyen w ap peye avan w konfime kous la. Pa gen sipriz, tout bagay klè.",
+    "feature_3_title": "Suiv An Tan Reyèl",
+    "feature_3_text": "Gade kote chofè a ye sou kat la ak konbyen tan l ap pran pou rive jwenn ou.",
+    "feature_4_title": "Plizyè Metòd Peman",
+    "feature_4_text": "Peye avèk MonCash, NatCash, Bank oswa kach. Chwazi sa ki pi bon pou ou.",
+    "feature_5_title": "Pwograme Kous Ou",
+    "feature_5_text": "Mande yon kous kounye a oswa pwograme youn pou demen. Planifye deplasman w!",
+    "feature_6_title": "Chofè Verifye",
+    "feature_6_text": "Tout chofè yo pase nan yon pwosesis apwobasyon. Sekirite w se priyorite nou.",
+    "how_title": "Kòman Sa Mache?",
+    "how_subtitle": "Kòmanse vwayaje an 4 etap senp",
+    "step_1_title": "Telechaje App La",
+    "step_1_text": "Pran TapTapGo sou App Store oswa Play Store. Gratis nèt!",
+    "step_2_title": "Enskri Ou",
+    "step_2_text": "Kreye kont ou avèk nimewo telefòn w oswa imèl. Rapid e fasil.",
+    "step_3_title": "Mande Kous Ou",
+    "step_3_text": "Chwazi kote w ye ak kote w prale. Konfime pri a.",
+    "step_4_title": "Vwayaje!",
+    "step_4_text": "Chofè a ap vin pran w. Suiv li sou kat la epi anjoye trajè a!",
+    "apps_title": "Telechaje Aplikasyon An",
+    "apps_subtitle": "Yon app pou pasajè, yon lòt pou chofè",
+    "app_passenger_title": "App Pasajè",
+    "app_passenger_text": "Mande moto oswa machin nan nenpòt kote nan peyi a. Wè pri a, suiv chofè a, epi peye jan w vle.",
+    "app_driver_title": "App Chofè",
+    "app_driver_text": "Vin travay ak TapTapGo! Enskri ou, aksepte kous yo, epi touche lajan w. Jere revni w, gade istorik trajè w.",
+    "app_unified_title": "Yon app, tout moun",
+    "app_unified_text": "Si w vle mande kous, ouvri app la kòm pasajè. Si w vle vin chofè, chwazi mòd chofè. Mande moto oswa machin, suiv trajè a, peye fasil — oswa enskri ou kòm chofè, aksepte kous yo, epi touche lajan w. Tout bagay nan menm aplikasyon an.",
+    "white_label_title": "Mande Solisyon Marque Pwop Ou (White-Label)",
+    "white_label_intro": "Vil ou oswa antrepriz ou vle gen pwòp aplikasyon transpò li? Ak TapTapGo White-Label, ou ka gen non w, koulè w, ak zòn w. Ranpli fòmilè sa a pou nou kontakte w!",
+    "why_title": "Poukisa Chwazi TapTapGo?",
+    "why_subtitle": "Sa ki fè nou diferan",
+    "benefit_1_title": "Sekirite",
+    "benefit_1_text": "Chofè verifye, trajè suiv, sipò 24/7",
+    "benefit_2_title": "Pri Klè",
+    "benefit_2_text": "Wè pri a avan w konfime, pa gen frè kache",
+    "benefit_3_title": "Fèt Pou Ayiti",
+    "benefit_3_text": "Sistèm adapte pou reyalite ayisyen an",
+    "benefit_4_title": "Rapid",
+    "benefit_4_text": "Chofè yo toupre w, tan datant kout",
+    "vehicle_images_title": "Transpò Nou Yo",
+    "vehicle_images_subtitle": "Chwazi moto pou rapid oswa machin pou konfò. Chofè verifye, sekirite garanti.",
+    "footer_text": "Transpò rapid, sekirize, ak pri klè pou tout Ayiti. Moto ak machin disponib 24/7.",
+    "footer_copyright": "© 2026 TapTapGo. Tout dwa rezève. Fèt ak ❤️ pou Ayiti.",
+}
+
+# Structure du footer (colonnes + liens) pour contrôle total SuperAdmin
+FOOTER_DEFAULTS = {
+    "brand_title": "TapTapGo",
+    "brand_text": "Transpò rapid, sekirize, ak pri klè pou tout Ayiti. Moto ak machin disponib 24/7.",
+    "copyright": "© 2026 TapTapGo. Tout dwa rezève. Fèt ak ❤️ pou Ayiti.",
+    "play_store_url": "https://play.google.com/store/apps/details?id=com.taptapgo.app",
+    "app_store_url": "https://apps.apple.com/app/taptapgo",
+    "direct_apk_url": "",
+    "whitelabel_confirm_subject": "TapTapGo — Nou resevwa demann ou (Marque Pwop Ou)",
+    "whitelabel_confirm_body": "Bonjou {{name}},\n\nMèsi paske ou te voye demann ou pou {{company}} ({{zone}}).\n\nNou resevwa li byen. Yon nan ekspè nou nan depatman an ap kontakte w pou yon kout diskisyon.\n\nNou ap reponn ou byento!\n\nBonjou,\nEkip TapTapGo",
+    "support_sant_ed_content": "🆘 SANT ED — REPONS RAPID POU KESYON W\n\n═══════════════════════════════════════\n\n📱 SÈVI AK APP LA\n\n❓ Kijan mwen mande yon kous?\n✅ Ouvri app TapTapGo, antre adrès ou ak kote w prale. Konfime pri a epi chofè a ap vin pran w.\n\n❓ Kijan mwen ka anile yon kous?\n✅ Klike sou bouton \"Anile Kous\" avan chofè a rive. Si w anile apre 2 minit, ka gen yon ti frè anilasyon.\n\n❓ Èske mwen ka planifye yon kous pou pita?\n✅ Wi! Chwazi \"Planifye Kous\" epi seleksyone lè ak dat ou vle pati. Chofè a ap vin nan lè egzat.\n\n❓ Kijan mwen ka suiv chofè a?\n✅ Yon fwa w mande kous la, ou ap wè machin nan sou kat la an tan reyèl. Ou ka pataje trajè w ak fanmi w tou.\n\n❓ Èske mwen bezwen entènèt pou sèvi ak app la?\n✅ Ou bezwen entènèt pou mande kous la, men GPS la fonksyone ofline pou montre wout la.\n\n═══════════════════════════════════════\n\n💳 KESYON SOU PEMAN\n\n❓ Kijan mwen peye?\n✅ Ou kapab peye avèk MonCash, NatCash, kach oswa lòt metòd disponib nan app la.\n\n❓ Èske mwen ka peye apre kous la?\n✅ Wi! Si w chwazi \"Peye an Kach\", w ap peye chofè a dirèk apre kous la fini.\n\n❓ Èske gen frè kache?\n✅ NON! Pri ou wè avan w monte se pri total. 0 sipriz, 0 frè adisyonèl.\n\n❓ Èske mwen ka bay poubwa?\n✅ Wi! Ou ka bay poubwa an kach oswa ajoute l nan app la apre kous la.\n\n❓ Kijan mwen jwenn resi mwen?\n✅ Ale nan \"Istwa Kous\" epi klike sou kous la. Ou ka telechaje resi a oswa resevwa l pa imèl.\n\n═══════════════════════════════════════\n\n🛡️ SEKIRITE AK PWOTEKSYON\n\n❓ Kijan mwen konnen chofè a verifye?\n✅ TOUT chofè pase verifikasyon : ID nasyonal, kasye jidisyè, entèvyou, ak fòmasyon. Ou wè foto yo ak nòt yo nan app la.\n\n❓ Sa pou m fè si m santi m pa an sekirite?\n✅ Klike sou bouton SOS WOUJ la nan app la. Sa ap kontakte fòs lòd ak fanmi w otomatikman.\n\n❓ Èske fanmi m ka suiv kous mwen?\n✅ Wi! Ou ka pataje kous la an DIRÈK avèk moun ou fè konfyans. Yo ap wè egzakteman kote w ye.\n\n❓ Sa pase si m bliye yon bagay nan machin nan?\n✅ Kontakte nou imedyatman (24/7). Nou ap pale ak chofè a epi ede w jwenn bagay ou a.\n\n❓ Kijan mwen rapòte yon pwoblèm?\n✅ Ale nan \"Istwa Kous\", chwazi kous la, epi klike \"Rapòte Pwoblèm\". Nou ap reponn nan mwens pase 24 èdtan.\n\n═══════════════════════════════════════\n\n🚗 POU CHOFÈ YO\n\n❓ Kijan mwen vin chofè?\n✅ Ouvri app la, chwazi mòd chofè, epi ranpli fòmilè enskripsyon an. Ekip nou an ap verifye enfòmasyon w epi apwouve w.\n\n❓ Ki dokiman mwen bezwen?\n✅ ID nasyonal, pèmi kondi, kat gri machin nan, kat asirans, ak 2 foto pasepò.\n\n❓ Konbyen tan li pran pou yo apwouve m?\n✅ Si tout dokiman w kòrèk, apwobasyon an pran 24-48 èdtan.\n\n❓ Èske mwen peye pou enskripsyon?\n✅ NON! Enskripsyon an 100% GRATIS. Nou pa mande okenn frè davans.\n\n❓ Konbyen mwen ka fè pa jou?\n✅ Sa depann de konbyen kous ou aksepte. Chofè nou yo fè ant 1,500-5,000 goud pa jou an mwayèn.\n\n❓ Kilè mwen resevwa lajan mwen?\n✅ Lajan pou chak kous transfere OTOMATIKMAN chak jou oswa chak semèn selon preferans ou.\n\n❓ Èske mwen ka refize yon kous?\n✅ Wi! Ou ka aksepte oswa refize nenpòt kous. Men atansyon, si w refize twòp, sa ka afekte nòt ou.\n\n═══════════════════════════════════════\n\n⚙️ PWOBLÈM TEKNIK\n\n❓ App la pa ouvè — sa pou m fè?\n✅ 1) Verifye si ou gen dènye vèsyon an\n   2) Redémarre telefòn ou\n   3) Si sa pa mache, kontakte nou\n\n❓ Kijan mwen mete ajou app la?\n✅ Ale nan Play Store (Android) oswa App Store (iPhone), chèche \"TapTapGo\", epi klike \"Mete Ajou\".\n\n❓ App la manje twòp batri — poukisa?\n✅ GPS la itilize batri. Mete \"Mode Ekonomi Batri\" nan Settings pou redui sa.\n\n❓ Mwen pa resevwa notifikasyon — poukisa?\n✅ Ale nan Settings telefòn ou → Aplikasyon → TapTapGo → Notifikasyon epi aktive yo.\n\n❓ Kijan mwen chanje enfòmasyon mwen?\n✅ Ale nan \"Pwofil\" → \"Modifye Enfòmasyon\" → Fè chanjman yo → Anrejistre.\n\n═══════════════════════════════════════\n\n📞 GEN YON PWOBLÈM?\n\nKontakte nou pa telefòn, WhatsApp oswa imèl (gade \"Kontakte Nou\"). \n\n🕐 Nou la pou ede w 24/7!\n\n📱 WhatsApp : [+509 XXXX XXXX]\n📧 Email : support@taptapgo.ht\n💬 Chat Live : Nan app la\n\n═══════════════════════════════════════\n\n❓ PA JWENN REPONS OU?\n\n[BOUTON : PALE AK YON AJAN]\n[BOUTON : GADE VIDEYO EKSPLIKASYON]\n\nNou la pou ou, chak jou, chak èdtan! 💚",
+    "support_kontak_content": "TapTapGo — Kontakte Nou\n\n• Telefòn sipò: +509 XX XX XX XX\n• WhatsApp: +509 XX XX XX XX\n• Imèl: sipò@taptapgoht.com\n\nLè nou ouvri: 24/7\n\nPou demann White-Label (marque pwop ou), ranpli fòmilè a sou paj sa a. Ekip nou an ap kontakte w byento.\n\nPou chofè ak pasajè: Ouvri app la epi ale nan \"Èd & Sipò\" pou jwenn lyen dirèk pou rele oswa WhatsApp.",
+    "support_politik_content": _load_politik_content(),
+    "support_video_url": "",
+    "image_ride_url": "",
+    "image_moto_url": "",
+    "image_auto_url": "",
+    "columns": [
+        {
+            "title": "Aplikasyon",
+            "links": [
+                {"label": "App Pasajè", "href": "#aplikasyon"},
+                {"label": "App Chofè", "href": "#aplikasyon"},
+                {"label": "Marque Pwop Ou", "href": "#marque-pwop"},
+            ],
+        },
+        {
+            "title": "Konpayi",
+            "links": [
+                {"label": "Fonksyonalite", "href": "#fonksyonalite"},
+                {"label": "Sou Nou", "href": "#sou-nou"},
+            ],
+        },
+        {
+            "title": "Sipò",
+            "links": [
+                {"label": "Sant Èd", "href": "#sant-ed"},
+                {"label": "Kontakte Nou", "href": "#kontakte-nou"},
+                {"label": "Politik Konfidansyalite", "href": "#politik"},
+            ],
+        },
+    ],
+}
+
+
+def _get_footer_merged() -> Dict[str, Any]:
+    """Merge stored footer with defaults."""
+    try:
+        r = supabase.table("landing_content").select("value").eq("key", "footer").execute()
+        stored = (r.data[0]["value"] or {}) if r.data else {}
+    except Exception:
+        stored = {}
+    result = dict(FOOTER_DEFAULTS)
+    if stored.get("brand_title") is not None:
+        result["brand_title"] = stored["brand_title"]
+    if stored.get("brand_text") is not None:
+        result["brand_text"] = stored["brand_text"]
+    if stored.get("copyright") is not None:
+        result["copyright"] = stored["copyright"]
+    if stored.get("play_store_url") is not None:
+        result["play_store_url"] = stored["play_store_url"] or ""
+    if stored.get("app_store_url") is not None:
+        result["app_store_url"] = stored["app_store_url"] or ""
+    if stored.get("direct_apk_url") is not None:
+        result["direct_apk_url"] = stored["direct_apk_url"] or ""
+    if stored.get("whitelabel_confirm_subject") is not None:
+        result["whitelabel_confirm_subject"] = stored["whitelabel_confirm_subject"] or ""
+    if stored.get("whitelabel_confirm_body") is not None:
+        result["whitelabel_confirm_body"] = stored["whitelabel_confirm_body"] or ""
+    # Utiliser le contenu stocké seulement s'il contient la version complète (ex: "SANT ED" ou "POU CHOFÈ YO")
+    # Sinon garder FOOTER_DEFAULTS (version complète) pour corriger l'ancienne version tronquée en DB
+    stored_sant_ed = stored.get("support_sant_ed_content") or ""
+    if stored_sant_ed and ("SANT ED" in stored_sant_ed or "POU CHOFÈ YO" in stored_sant_ed or len(stored_sant_ed) > 1500):
+        result["support_sant_ed_content"] = stored_sant_ed
+    if stored.get("support_kontak_content") is not None:
+        result["support_kontak_content"] = stored.get("support_kontak_content") or ""
+    stored_politik = stored.get("support_politik_content") or ""
+    if stored_politik and ("ENTWODIKSYON" in stored_politik or "REZIME RAPID" in stored_politik or len(stored_politik) > 2000):
+        result["support_politik_content"] = stored_politik
+    if stored.get("support_video_url") is not None:
+        result["support_video_url"] = stored.get("support_video_url") or ""
+    if stored.get("image_ride_url") is not None:
+        result["image_ride_url"] = stored.get("image_ride_url") or ""
+    if stored.get("image_moto_url") is not None:
+        result["image_moto_url"] = stored.get("image_moto_url") or ""
+    if stored.get("image_auto_url") is not None:
+        result["image_auto_url"] = stored.get("image_auto_url") or ""
+    if isinstance(stored.get("columns"), list) and len(stored["columns"]) > 0:
+        result["columns"] = stored["columns"]
+    return result
+
+
+def _get_landing_merged() -> Dict[str, str]:
+    """Merge stored content with defaults."""
+    try:
+        r = supabase.table("landing_content").select("value").eq("key", "sections").execute()
+        stored = (r.data[0]["value"] or {}) if r.data else {}
+    except Exception:
+        stored = {}
+    result = dict(LANDING_DEFAULTS)
+    for k, v in stored.items():
+        if v is not None and str(v).strip():
+            result[k] = str(v)
+    return result
+
+
+@api_router.get("/landing")
+async def get_landing_content():
+    """Public - get landing page content + footer (merge defaults + stored)."""
+    try:
+        return {"content": _get_landing_merged(), "footer": _get_footer_merged()}
+    except Exception as e:
+        logger.error(f"Get landing error: {e}")
+        return {"content": LANDING_DEFAULTS, "footer": FOOTER_DEFAULTS}
+
+
+class WhiteLabelRequestCreate(BaseModel):
+    company: str
+    name: str
+    phone: str
+    email: EmailStr
+    zone: str
+    message: Optional[str] = None
+    website: Optional[str] = None
+    drivers: Optional[int] = None
+
+
+class WhiteLabelRequestProcess(BaseModel):
+    status: str = "processed"
+    admin_notes: Optional[str] = None
+
+
+class SupportMessageCreate(BaseModel):
+    name: str
+    phone: str
+    email: str  # Validation souple — aksepte fòma tankou user@domain (pa mande TLD)
+    message: str
+
+    @field_validator("email")
+    @classmethod
+    def email_contains_at(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v or "@" not in v:
+            raise ValueError("Imèl la dwe gen @ — egzanp: non@imel.com")
+        if len(v) < 5:
+            raise ValueError("Imèl la twò kout")
+        return v
+
+
+def _send_email_smtp(to_email: str, subject: str, body: str) -> None:
+    """Envoie un email via SMTP. Lève une exception si SMTP non configuré ou échec."""
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASS")
+    smtp_from = os.environ.get("SMTP_FROM") or smtp_user
+    if not all([smtp_host, smtp_user, smtp_pass]):
+        raise RuntimeError("SMTP non configuré (SMTP_HOST, SMTP_USER, SMTP_PASS)")
+    msg = MIMEMultipart()
+    msg["From"] = smtp_from
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_from, to_email, msg.as_string())
+
+
+@api_router.post("/landing/whitelabel-request")
+async def create_whitelabel_request(data: WhiteLabelRequestCreate):
+    """Public - soumettre une demande White-Label depuis le formulaire landing."""
+    try:
+        row = {
+            "company": data.company.strip(),
+            "name": data.name.strip(),
+            "phone": data.phone.strip(),
+            "email": data.email.strip(),
+            "zone": data.zone.strip(),
+            "message": (data.message or "").strip() or None,
+            "website": (data.website or "").strip() or None,
+            "drivers_estimate": data.drivers,
+            "status": "pending",
+        }
+        r = supabase.table("white_label_requests").insert(row).execute()
+        rid = r.data[0]["id"] if r.data else None
+        footer = _get_footer_merged()
+        subj = (footer.get("whitelabel_confirm_subject") or "").strip()
+        body = (footer.get("whitelabel_confirm_body") or "").strip()
+        if subj and body:
+            subj = subj.replace("{{name}}", data.name).replace("{{company}}", data.company).replace("{{zone}}", data.zone)
+            body = body.replace("{{name}}", data.name).replace("{{company}}", data.company).replace("{{zone}}", data.zone)
+            try:
+                _send_email_smtp(data.email.strip(), subj, body)
+            except Exception as mail_err:
+                logger.warning(f"Whitelabel auto-confirm email failed (request saved): {mail_err}")
+        return {"success": True, "id": rid}
+    except Exception as e:
+        logger.error(f"Create whitelabel request error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/landing/whitelabel-requests")
+async def list_whitelabel_requests(
+    current_user: dict = Depends(get_current_user),
+    status: Optional[str] = Query(None, description="Filtrer: pending, processed, archived"),
+):
+    """SuperAdmin only - lister les demandes White-Label."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman")
+    try:
+        q = supabase.table("white_label_requests").select("*").order("created_at", desc=True)
+        if status:
+            q = q.eq("status", status)
+        r = q.execute()
+        return {"requests": r.data or []}
+    except Exception as e:
+        logger.error(f"List whitelabel requests error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.patch("/landing/whitelabel-requests/{request_id}")
+async def process_whitelabel_request(
+    request_id: str,
+    data: WhiteLabelRequestProcess,
+    current_user: dict = Depends(get_current_user),
+):
+    """SuperAdmin only - marquer une demande comme traitée."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman")
+    try:
+        update = {
+            "status": data.status,
+            "admin_notes": data.admin_notes or None,
+            "processed_at": datetime.utcnow().isoformat(),
+            "processed_by": current_user.get("id"),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        r = supabase.table("white_label_requests").update(update).eq("id", request_id).execute()
+        if not r.data:
+            raise HTTPException(status_code=404, detail="Demann pa jwenn")
+        return {"success": True, "request": r.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Process whitelabel request error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/landing/whitelabel-requests/{request_id}")
+async def delete_whitelabel_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """SuperAdmin only - supprimer une demande White-Label."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman ki ka efase.")
+    try:
+        supabase.table("white_label_requests").delete().eq("id", request_id).execute()
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete whitelabel request error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class WhitelabelSendEmail(BaseModel):
+    subject: str
+    message: str
+
+
+@api_router.post("/landing/whitelabel-requests/{request_id}/send-email")
+async def send_whitelabel_email(
+    request_id: str,
+    data: WhitelabelSendEmail,
+    current_user: dict = Depends(get_current_user),
+):
+    """SuperAdmin only - envoyer un email au demandant depuis le modal."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman")
+    try:
+        r = supabase.table("white_label_requests").select("email, name, company").eq("id", request_id).execute()
+        if not r.data:
+            raise HTTPException(status_code=404, detail="Demann pa jwenn")
+        to_email = r.data[0]["email"]
+        subject = (data.subject or "").strip() or "TapTapGo - Demann Marque Pwop Ou"
+        body = (data.message or "").strip() or ""
+        if not body:
+            raise HTTPException(status_code=400, detail="Mesaj la pa ka vid.")
+        _send_email_smtp(to_email, subject, body)
+        return {"success": True, "detail": "Imèl la voye."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Send whitelabel email error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/landing/support-message")
+async def create_support_message(data: SupportMessageCreate):
+    """Public - soumettre un message support depuis Sant Èd (bouton Pale Ak Yon Ajan)."""
+    try:
+        row = {
+            "name": data.name.strip(),
+            "phone": data.phone.strip(),
+            "email": data.email.strip(),
+            "message": (data.message or "").strip() or "",
+        }
+        r = supabase.table("support_messages").insert(row).execute()
+        rid = r.data[0]["id"] if r.data else None
+        return {"success": True, "id": rid}
+    except Exception as e:
+        logger.error(f"Create support message error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/support-messages")
+async def list_support_messages(
+    current_user: dict = Depends(get_current_user),
+    status: Optional[str] = Query(None, description="pending, read, replied, archived"),
+):
+    """SuperAdmin et Admin - lister les messages support."""
+    ut = current_user.get("user_type")
+    if ut not in ("superadmin", "admin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Ou pa gen dwa pou wè mesaj sipò yo")
+    try:
+        q = supabase.table("support_messages").select("*").order("created_at", desc=True)
+        if status:
+            q = q.eq("status", status)
+        r = q.execute()
+        return {"messages": r.data or []}
+    except Exception as e:
+        logger.error(f"List support messages error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SupportMessageUpdate(BaseModel):
+    status: Optional[str] = None
+    admin_notes: Optional[str] = None
+
+
+@api_router.patch("/support-messages/{message_id}")
+async def update_support_message(
+    message_id: str,
+    data: SupportMessageUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """SuperAdmin et Admin - modifier un message support (statut, nòt)."""
+    ut = current_user.get("user_type")
+    if ut not in ("superadmin", "admin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Ou pa gen dwa pou modifye mesaj sipò")
+    try:
+        update = {"updated_at": datetime.utcnow().isoformat()}
+        if data.status is not None:
+            update["status"] = data.status
+        if data.admin_notes is not None:
+            update["admin_notes"] = data.admin_notes
+        r = supabase.table("support_messages").update(update).eq("id", message_id).execute()
+        if not r.data:
+            raise HTTPException(status_code=404, detail="Mesaj pa jwenn")
+        return {"success": True, "message": r.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update support message error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SupportMessageSendEmail(BaseModel):
+    subject: Optional[str] = ""
+    message: Optional[str] = ""
+
+
+@api_router.post("/support-messages/{message_id}/send-email")
+async def send_support_message_email(
+    message_id: str,
+    data: SupportMessageSendEmail,
+    current_user: dict = Depends(get_current_user),
+):
+    """SuperAdmin et Admin - voye imèl bay moun ki voye mesaj sipò."""
+    ut = current_user.get("user_type")
+    if ut not in ("superadmin", "admin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Ou pa gen dwa pou voye imèl")
+    try:
+        r = supabase.table("support_messages").select("email, name, message").eq("id", message_id).execute()
+        if not r.data:
+            raise HTTPException(status_code=404, detail="Mesaj pa jwenn")
+        to_email = r.data[0]["email"]
+        subject = (data.subject or "").strip() or "TapTapGo — Repons pou mesaj ou"
+        body = (data.message or "").strip() or ""
+        if not body:
+            raise HTTPException(status_code=400, detail="Mesaj la pa ka vid.")
+        _send_email_smtp(to_email, subject, body)
+        supabase.table("support_messages").update(
+            {"status": "replied", "updated_at": datetime.utcnow().isoformat()}
+        ).eq("id", message_id).execute()
+        return {"success": True, "detail": "Imèl la voye."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Send support message email error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class LandingUpdate(BaseModel):
+    content: Dict[str, Optional[str]] = {}
+    footer: Optional[Dict[str, Any]] = None
+
+
+@api_router.put("/landing")
+async def update_landing(data: LandingUpdate, current_user: dict = Depends(get_current_user)):
+    """SuperAdmin only - update landing page content et/ou footer."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman ki ka modifye landing la")
+    try:
+        if data.content is not None:
+            stored = {}
+            for k, v in data.content.items():
+                if k in LANDING_DEFAULTS:
+                    stored[k] = v if v is not None and str(v).strip() else None
+            supabase.table("landing_content").upsert(
+                {"key": "sections", "value": stored, "updated_at": datetime.utcnow().isoformat()},
+                on_conflict="key",
+            ).execute()
+        if data.footer is not None:
+            supabase.table("landing_content").upsert(
+                {"key": "footer", "value": data.footer, "updated_at": datetime.utcnow().isoformat()},
+                on_conflict="key",
+            ).execute()
+        return {"success": True, "content": _get_landing_merged(), "footer": _get_footer_merged()}
+    except Exception as e:
+        logger.error(f"Update landing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/landing")
+async def reset_landing(current_user: dict = Depends(get_current_user)):
+    """SuperAdmin only - reset landing et footer aux valeurs par défaut."""
+    if current_user.get("user_type") != "superadmin":
+        raise HTTPException(status_code=403, detail="Se SuperAdmin sèlman ki ka reyinite landing la")
+    try:
+        supabase.table("landing_content").upsert(
+            {"key": "sections", "value": {}, "updated_at": datetime.utcnow().isoformat()},
+            on_conflict="key",
+        ).execute()
+        supabase.table("landing_content").upsert(
+            {"key": "footer", "value": {}, "updated_at": datetime.utcnow().isoformat()},
+            on_conflict="key",
+        ).execute()
+        return {"success": True, "content": LANDING_DEFAULTS, "footer": FOOTER_DEFAULTS}
+    except Exception as e:
+        logger.error(f"Reset landing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Dossier landing (à la racine du projet)
+LANDING_DIR = ROOT_DIR.parent / "landing"
+
+
+@app.get("/landing", response_class=HTMLResponse)
+def serve_landing(request: Request):
+    """Sert la page landing. En localhost, remplace les liens domaine par localhost:8081."""
+    index_path = LANDING_DIR / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="Landing page not found")
+    html = index_path.read_text(encoding="utf-8")
+    # En localhost, faire pointer les liens vers l'app front (8081)
+    host = request.headers.get("host", "")
+    if "localhost" in host or "127.0.0.1" in host:
+        front_origin = "http://localhost:8081"
+        html = html.replace("https://taptapgoht.com", front_origin)
+    # Faire pointer les assets vers le backend
+    html = html.replace('src="images/', 'src="/landing-assets/images/')
+    html = html.replace('href="images/', 'href="/landing-assets/images/')
+    html = html.replace("url('images/", "url('/landing-assets/images/")
+    html = html.replace('url("images/', 'url("/landing-assets/images/')
+    return HTMLResponse(html)
+
+
+app.mount("/landing-assets", StaticFiles(directory=str(LANDING_DIR)), name="landing-assets")
+
 # Include the router in the main app
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

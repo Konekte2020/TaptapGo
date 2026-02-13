@@ -56,6 +56,7 @@ export default function RegisterDriver() {
     vehicle_photo: '',
     license_photo: '',
     vehicle_papers: '',
+    casier_judiciaire: '',
     profile_photo: '',
     password: '',
     confirmPassword: '',
@@ -100,7 +101,7 @@ export default function RegisterDriver() {
   };
 
   const openImagePicker = async (
-    field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers',
+    field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers' | 'casier_judiciaire',
     source: 'camera' | 'library'
   ) => {
     try {
@@ -138,7 +139,7 @@ export default function RegisterDriver() {
     }
   };
 
-  const pickImage = (field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers') => {
+  const pickImage = (field: 'profile_photo' | 'vehicle_photo' | 'license_photo' | 'vehicle_papers' | 'casier_judiciaire') => {
     Alert.alert(
       'Ajoute foto',
       'Chwazi sous foto a',
@@ -199,6 +200,7 @@ export default function RegisterDriver() {
         vehicle_photo: form.vehicle_photo || undefined,
         license_photo: form.license_photo || undefined,
         vehicle_papers: form.vehicle_papers || undefined,
+        casier_judiciaire: form.casier_judiciaire || undefined,
         profile_photo: form.profile_photo || undefined,
         password: form.password,
         admin_id: BRAND_ID || undefined,
@@ -519,6 +521,18 @@ export default function RegisterDriver() {
             <>
               <Ionicons name="document" size={24} color={Colors.textSecondary} />
               <Text style={styles.documentText}>Papye Machin</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.documentCard} onPress={() => pickImage('casier_judiciaire')}>
+          {form.casier_judiciaire ? (
+            <Image source={{ uri: form.casier_judiciaire }} style={styles.documentImage} />
+          ) : (
+            <>
+              <Ionicons name="shield-checkmark" size={24} color={Colors.textSecondary} />
+              <Text style={styles.documentText}>Kasye Jidisyè</Text>
+              <Text style={[styles.documentText, { fontSize: 10, color: Colors.textSecondary }]}>Obligatwa pou pase an liy</Text>
             </>
           )}
         </TouchableOpacity>

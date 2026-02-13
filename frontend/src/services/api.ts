@@ -84,6 +84,7 @@ export const authAPI = {
     vehicle_photo?: string;
     license_photo?: string;
     vehicle_papers?: string;
+    casier_judiciaire?: string;
     profile_photo?: string;
     password: string;
     admin_id?: string;
@@ -201,6 +202,18 @@ export type FooterData = {
   brand_title: string;
   brand_text: string;
   copyright: string;
+  play_store_url?: string;
+  app_store_url?: string;
+  direct_apk_url?: string;
+  whitelabel_confirm_subject?: string;
+  whitelabel_confirm_body?: string;
+  support_sant_ed_content?: string;
+  support_kontak_content?: string;
+  support_politik_content?: string;
+  support_video_url?: string;
+  image_ride_url?: string;
+  image_moto_url?: string;
+  image_auto_url?: string;
   columns: FooterColumn[];
 };
 
@@ -214,7 +227,7 @@ export type WhiteLabelRequest = {
   message?: string;
   website?: string;
   drivers_estimate?: number;
-  status: 'pending' | 'processed' | 'archived';
+  status: 'pending' | 'processed' | 'archived' | 'cancelled' | 'rejected';
   admin_notes?: string;
   processed_at?: string;
   created_at: string;
@@ -229,6 +242,37 @@ export const landingAPI = {
     api.get<{ requests: WhiteLabelRequest[] }>('/landing/whitelabel-requests', status ? { params: { status } } : {}),
   processWhitelabelRequest: (id: string, status: string, admin_notes?: string) =>
     api.patch(`/landing/whitelabel-requests/${id}`, { status, admin_notes }),
+  deleteWhitelabelRequest: (id: string) => api.delete(`/landing/whitelabel-requests/${id}`),
+  sendWhitelabelEmail: (id: string, subject: string, message: string) =>
+    api.post(`/landing/whitelabel-requests/${id}/send-email`, { subject, message }),
+};
+
+export type SupportMessage = {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  message: string;
+  status: 'pending' | 'read' | 'replied' | 'archived';
+  admin_notes?: string;
+  source?: string;
+  created_at: string;
+  updated_at?: string;
+};
+
+export const supportMessagesAPI = {
+  submit: (data: { name: string; phone: string; email: string; message: string }) =>
+    fetch(`${API_URL}/api/landing/support-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).then((r) => r.json()),
+  list: (status?: string) =>
+    api.get<{ messages: SupportMessage[] }>('/support-messages', status ? { params: { status } } : {}),
+  update: (id: string, data: { status?: string; admin_notes?: string }) =>
+    api.patch(`/support-messages/${id}`, data),
+  sendEmail: (id: string, subject: string, message: string) =>
+    api.post(`/support-messages/${id}/send-email`, { subject, message }),
 };
 
 // Profile API
@@ -256,6 +300,7 @@ export const profileAPI = {
     vehicle_photo?: string;
     license_photo?: string;
     vehicle_papers?: string;
+    casier_judiciaire?: string;
     moncash_enabled?: boolean;
     moncash_phone?: string;
     natcash_enabled?: boolean;

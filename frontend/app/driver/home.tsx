@@ -215,7 +215,20 @@ export default function DriverHome() {
       }
     } catch (error: any) {
       console.error('Toggle status error:', error);
-      Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab chanje stat');
+      const msg = error.response?.data?.detail || 'Pa kapab chanje stat';
+      const needsCasier = typeof msg === 'string' && msg.toLowerCase().includes('kasye');
+      if (needsCasier) {
+        Alert.alert(
+          'Kasye Jidisyè Obligatwa',
+          msg,
+          [
+            { text: 'OK' },
+            { text: 'Ale nan Dokiman', onPress: () => router.push('/driver/documents') },
+          ]
+        );
+      } else {
+        Alert.alert('Erè', msg);
+      }
     }
   };
 

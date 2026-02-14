@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,17 +11,54 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
-import { rideAPI, profileAPI } from '../../src/services/api';
+import { rideAPI, profileAPI, walletAPI } from '../../src/services/api';
+
+// Banques d'Haïti pour la sélection
+const BANKS_HAITI = [
+  'Banque de la Republique d Haiti (BRH)',
+  'Banque Nationale de Credit (BNC)',
+  'Sogebank',
+  'Unibank',
+  'Capital Bank',
+  'BUH (Banque de l Union Haitienne)',
+  'Banque Populaire Haitienne (BPH)',
+  'Sogebel',
+  'Scotiabank Haiti',
+  'CitiBank Haiti',
+];
+
+// Format typique du numéro de compte en Haïti (selon les banques)
+const NUMERO_KONT_FORMAT = 'Egzanp: 0000-000000 ou 10-12 chif (san espas)';
 
 export default function DriverEarnings() {
   const { user, updateUser } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [rides, setRides] = useState<any[]>([]);
+  const [walletData, setWalletData] = useState<{
+    wallet: { balance: number; balance_en_attente: number; total_gagne: number; total_retire: number };
+    retrait_possible: boolean;
+    raison?: string;
+    type_retrait?: string;
+    message?: string;
+    regles?: { montant_minimum: number; seuil_automatique: number };
+  } | null>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [withdrawModalVisible, setWithdrawModalVisible] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawMethod, setWithdrawMethod] = useState<'moncash' | 'natcash' | 'bank'>(
+    (user?.default_method && ['moncash', 'natcash', 'bank'].includes(user.default_method))
+      ? (user.default_method as 'moncash' | 'natcash' | 'bank')
+      : 'moncash'
+  );
+  const [withdrawing, setWithdrawing] = useState(false);
   const [savingMethods, setSavingMethods] = useState(false);
+  const [bankModalVisible, setBankModalVisible] = useState(false);
+  const [bankSearch, setBankSearch] = useState('');
   const [stats, setStats] = useState({
     today: 0,
     week: 0,
@@ -48,22 +85,25 @@ export default function DriverEarnings() {
   const fetchEarnings = async () => {
     setLoading(true);
     try {
-      const response = await rideAPI.getAll('completed');
-      const completedRides = response.data.rides || [];
+      const [ridesRes, walletRes, txnRes] = await Promise.all([
+        rideAPI.getAll('completed'),
+        walletAPI.get().catch(() => null),
+        walletAPI.getTransactions(30).catch(() => ({ data: { transactions: [] } })),
+      ]);
+      const completedRides = ridesRes.data.rides || [];
       setRides(completedRides);
+      if (walletRes?.data) setWalletData(walletRes.data);
+      setTransactions(txnRes.data?.transactions || []);
 
-      // Calculate stats
       const now = new Date();
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
       let today = 0, week = 0, month = 0, total = 0;
-
       completedRides.forEach((ride: any) => {
         const rideDate = new Date(ride.completed_at || ride.created_at);
         const amount = ride.final_price || ride.estimated_price || 0;
-        
         total += amount;
         if (rideDate >= todayStart) today += amount;
         if (rideDate >= weekStart) week += amount;
@@ -77,10 +117,39 @@ export default function DriverEarnings() {
         total,
         totalRides: completedRides.length,
       });
+      if (walletRes?.data?.wallet && user) {
+        updateUser({ wallet_balance: walletRes.data.wallet.balance });
+      }
     } catch (error) {
       console.error('Fetch earnings error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    const montant = Math.round(parseFloat(withdrawAmount.replace(/\s/g, '')) || 0);
+    const balance = walletData?.wallet?.balance ?? 0;
+    const min = walletData?.regles?.montant_minimum ?? 500;
+    if (!montant || montant < min) {
+      Alert.alert('Erè', `Montan minimum: ${min} HTG`);
+      return;
+    }
+    if (montant > balance) {
+      Alert.alert('Erè', 'Montan pi gran pase balans disponib');
+      return;
+    }
+    setWithdrawing(true);
+    try {
+      await walletAPI.withdraw(montant, withdrawMethod);
+      Alert.alert('Siksè', 'Demann retrait ou anrejistre. Ou ap resevwa yon notifikasyon le peyeman an fèt.');
+      setWithdrawModalVisible(false);
+      setWithdrawAmount('');
+      fetchEarnings();
+    } catch (err: any) {
+      Alert.alert('Erè', err.response?.data?.detail || 'Pa kapab voye demann retrait');
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -96,6 +165,12 @@ export default function DriverEarnings() {
     const digits = value.replace(/\D/g, '');
     return digits.startsWith('509') && digits.length === 11;
   };
+
+  const banksFiltered = useMemo(() => {
+    if (!bankSearch.trim()) return BANKS_HAITI;
+    const q = bankSearch.trim().toLowerCase();
+    return BANKS_HAITI.filter((b) => b.toLowerCase().includes(q));
+  }, [bankSearch]);
 
   const handleSaveMethods = async () => {
     if (form.moncash_enabled && !form.moncash_phone.trim()) {
@@ -204,18 +279,58 @@ export default function DriverEarnings() {
           </View>
         </View>
 
-        {/* Wallet Balance */}
+        {/* MON WALLET */}
         <View style={styles.walletCard}>
           <View style={styles.walletHeader}>
             <Ionicons name="wallet" size={24} color="white" />
-            <Text style={styles.walletTitle}>Balans Wallet</Text>
+            <Text style={styles.walletTitle}>MON WALLET</Text>
           </View>
+          <Text style={styles.walletRowLabel}>Balans disponib</Text>
           <Text style={styles.walletAmount}>
-            {(user?.wallet_balance || 0).toLocaleString()} HTG
+            {(walletData?.wallet?.balance ?? user?.wallet_balance ?? 0).toLocaleString()} HTG
           </Text>
-          <Text style={styles.walletNote}>
-            Komisyon sistèm retire otomatikman
+          <Text style={styles.walletRowLabel}>An attant</Text>
+          <Text style={styles.walletAmountSmall}>
+            {(walletData?.wallet?.balance_en_attente ?? 0).toLocaleString()} HTG
           </Text>
+          <View style={styles.walletDivider} />
+          <Text style={styles.walletRowLabel}>Total gagne</Text>
+          <Text style={styles.walletAmountSmall}>
+            {(walletData?.wallet?.total_gagne ?? 0).toLocaleString()} HTG
+          </Text>
+          <Text style={styles.walletRowLabel}>Total retire</Text>
+          <Text style={styles.walletAmountSmall}>
+            {(walletData?.wallet?.total_retire ?? 0).toLocaleString()} HTG
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.retirerButton,
+              (!walletData?.retrait_possible || (walletData?.wallet?.balance ?? 0) < (walletData?.regles?.montant_minimum ?? 500)) && styles.retirerButtonDisabled,
+            ]}
+            onPress={() => {
+              if (!walletData?.retrait_possible || (walletData?.wallet?.balance ?? 0) < (walletData?.regles?.montant_minimum ?? 500)) return;
+              const def = user?.default_method && ['moncash', 'natcash', 'bank'].includes(user.default_method)
+                ? (user.default_method as 'moncash' | 'natcash' | 'bank')
+                : 'moncash';
+              setWithdrawMethod(def);
+              setWithdrawModalVisible(true);
+            }}
+            disabled={!walletData?.retrait_possible || (walletData?.wallet?.balance ?? 0) < (walletData?.regles?.montant_minimum ?? 500)}
+          >
+            <Ionicons name="cash-outline" size={20} color="white" />
+            <Text style={styles.retirerButtonText}>RETIRE KOUNYE A</Text>
+          </TouchableOpacity>
+          {walletData?.retrait_possible ? (
+            <Text style={styles.walletNote}>
+              Retrait disponib (Balans ≥ {(walletData?.regles?.seuil_automatique ?? 1000).toLocaleString()} HTG)
+            </Text>
+          ) : walletData?.raison ? (
+            <Text style={styles.walletNoteWarning}>{walletData.raison}</Text>
+          ) : (
+            <Text style={styles.walletNote}>
+              Antre mwayen peman anba a epi ranpli balans pou retire
+            </Text>
+          )}
         </View>
 
         <View style={styles.paymentCard}>
@@ -274,25 +389,32 @@ export default function DriverEarnings() {
           </View>
           {form.bank_enabled && (
             <View style={styles.bankFields}>
+              <Text style={styles.bankFieldLabel}>Bank</Text>
+              <TouchableOpacity
+                style={styles.selectInput}
+                onPress={() => setBankModalVisible(true)}
+              >
+                <Text style={form.bank_name ? styles.selectText : styles.selectPlaceholder}>
+                  {form.bank_name || 'Chwazi bank (Ayiti)'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+              <Text style={styles.bankFieldLabel}>Non sou kont</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Non bank"
-                value={form.bank_name}
-                onChangeText={(value) => setForm({ ...form, bank_name: value })}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Non sou kont"
+                placeholder="Non moun ki sou kont la"
                 value={form.bank_account_name}
                 onChangeText={(value) => setForm({ ...form, bank_account_name: value })}
               />
+              <Text style={styles.bankFieldLabel}>Nimewo kont</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Nimewo kont"
+                placeholder="Antre nimewo kont (san espas)"
                 value={form.bank_account_number}
                 onChangeText={(value) => setForm({ ...form, bank_account_number: value })}
                 keyboardType="number-pad"
               />
+              <Text style={styles.helperText}>{NUMERO_KONT_FORMAT}</Text>
             </View>
           )}
 
@@ -333,39 +455,148 @@ export default function DriverEarnings() {
           </TouchableOpacity>
         </View>
 
-        {/* Recent Earnings */}
+        {/* Historique (transactions + retraits) */}
         <View style={styles.recentSection}>
-          <Text style={styles.sectionTitle}>Denyè Kous</Text>
-          {rides.slice(0, 5).map((ride, index) => (
-            <View key={ride.id || index} style={styles.earningItem}>
-              <View style={styles.earningLeft}>
-                <Ionicons
-                  name={ride.vehicle_type === 'moto' ? 'bicycle' : 'car'}
-                  size={20}
-                  color={ride.vehicle_type === 'moto' ? Colors.moto : Colors.car}
-                />
-                <View>
-                  <Text style={styles.earningRoute} numberOfLines={1}>
-                    {ride.destination_address}
-                  </Text>
-                  <Text style={styles.earningDate}>
-                    {new Date(ride.completed_at || ride.created_at).toLocaleDateString('fr-HT')}
-                  </Text>
+          <Text style={styles.sectionTitle}>Istorik</Text>
+          {transactions.slice(0, 20).map((tx: any, index) => {
+            const isRetrait = (tx.type || '').includes('retrait');
+            const isPositive = (tx.montant || 0) >= 0;
+            const dateStr = tx.date ? new Date(tx.date).toLocaleDateString('fr-HT', { day: 'numeric', month: 'short' }) : '—';
+            const label = tx.type === 'course_completed' ? `Kous → +${Math.abs(tx.montant || 0).toLocaleString()} HTG` : tx.type === 'retrait_traite' ? `Retrait → -${Math.abs(tx.montant || 0).toLocaleString()} HTG ✓ Peye` : tx.type === 'retrait_demande' ? `Retrait → -${Math.abs(tx.montant || 0).toLocaleString()} HTG (an attant)` : `${tx.type} ${isPositive ? '+' : ''}${(tx.montant || 0).toLocaleString()} HTG`;
+            return (
+              <View key={tx.id || index} style={styles.earningItem}>
+                <View style={styles.earningLeft}>
+                  <Ionicons
+                    name={isRetrait ? 'cash-outline' : 'car'}
+                    size={20}
+                    color={isPositive ? Colors.success : Colors.textSecondary}
+                  />
+                  <View>
+                    <Text style={styles.earningRoute} numberOfLines={1}>{label}</Text>
+                    <Text style={styles.earningDate}>{dateStr}</Text>
+                  </View>
                 </View>
+                <Text style={[styles.earningAmount, !isPositive && styles.earningAmountNegative]}>
+                  {isPositive ? '+' : ''}{(tx.montant || 0).toLocaleString()} HTG
+                </Text>
               </View>
-              <Text style={styles.earningAmount}>
-                +{ride.final_price || ride.estimated_price || 0} HTG
-              </Text>
-            </View>
-          ))}
-
-          {rides.length === 0 && (
+            );
+          })}
+          {transactions.length === 0 && (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>Pa gen kous fini ankò</Text>
+              <Text style={styles.emptyText}>Pa gen tranzaksyon ankò</Text>
             </View>
           )}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={withdrawModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !withdrawing && setWithdrawModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Demande retrait</Text>
+            <Text style={styles.bankFieldLabel}>Montan (HTG)</Text>
+            <TextInput
+              style={styles.input}
+              value={withdrawAmount}
+              onChangeText={setWithdrawAmount}
+              placeholder={`Minimum ${walletData?.regles?.montant_minimum ?? 500} HTG`}
+              keyboardType="number-pad"
+              placeholderTextColor={Colors.textSecondary}
+            />
+            <View style={styles.quickAmounts}>
+              {[500, 1000, 2000].map((n) => (
+                <TouchableOpacity key={n} style={styles.quickAmountBtn} onPress={() => setWithdrawAmount(String(n))}>
+                  <Text style={styles.quickAmountText}>{n.toLocaleString()}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.quickAmountBtn}
+                onPress={() => setWithdrawAmount(String(Math.floor(walletData?.wallet?.balance ?? 0)))}
+              >
+                <Text style={styles.quickAmountText}>Tout</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.bankFieldLabel}>Mwayen peyeman</Text>
+            <View style={styles.defaultRow}>
+              {(['moncash', 'natcash', 'bank'] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.defaultButton, withdrawMethod === m && styles.defaultButtonActive]}
+                  onPress={() => setWithdrawMethod(m)}
+                >
+                  <Text style={[styles.defaultText, withdrawMethod === m && styles.defaultTextActive]}>
+                    {m === 'bank' ? 'Kont bank' : m === 'moncash' ? 'MonCash' : 'NatCash'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.helperText}>
+              Ou ka retire nan MonCash, NatCash oswa kont bank. Si w chwazi kont bank, konfigire bank ou anba a (Mwayen pou resevwa lajan).
+            </Text>
+            <Text style={styles.helperText}>Tretman anba 24h</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelButton} onPress={() => !withdrawing && setWithdrawModalVisible(false)}>
+                <Text style={styles.modalCloseText}>Anile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.saveButton, styles.modalSubmitButton, withdrawing && styles.saveButtonDisabled]} onPress={handleWithdraw} disabled={withdrawing}>
+                {withdrawing ? <ActivityIndicator color="white" /> : <Text style={styles.saveButtonText}>Voye demann</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={bankModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBankModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Chwazi bank (Ayiti)</Text>
+            <TextInput
+              style={styles.bankSearchInput}
+              placeholder="Chache bank..."
+              value={bankSearch}
+              onChangeText={setBankSearch}
+              placeholderTextColor={Colors.textSecondary}
+            />
+            <ScrollView style={styles.bankScroll} contentContainerStyle={styles.bankList}>
+              {banksFiltered.map((bank) => (
+                <TouchableOpacity
+                  key={bank}
+                  style={styles.bankItem}
+                  onPress={() => {
+                    setForm((f) => ({ ...f, bank_name: bank }));
+                    setBankModalVisible(false);
+                    setBankSearch('');
+                  }}
+                >
+                  <Text style={styles.bankText}>{bank}</Text>
+                </TouchableOpacity>
+              ))}
+              {banksFiltered.length === 0 && (
+                <Text style={styles.emptyBankText}>Pa gen bank ki matche</Text>
+              )}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.modalClose}
+              onPress={() => {
+                setBankModalVisible(false);
+                setBankSearch('');
+              }}
+            >
+              <Text style={styles.modalCloseText}>Fèmen</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -448,16 +679,55 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255,255,255,0.8)',
   },
+  walletRowLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 6,
+  },
   walletAmount: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
     color: 'white',
-    marginTop: 8,
+  },
+  walletAmountSmall: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
+  walletDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginVertical: 10,
+  },
+  retirerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 14,
+    borderWidth: 2,
+    borderColor: 'white',
+  },
+  retirerButtonDisabled: {
+    opacity: 0.6,
+  },
+  retirerButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 14,
   },
   walletNote: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.6)',
-    marginTop: 8,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 10,
+  },
+  walletNoteWarning: {
+    fontSize: 12,
+    color: 'rgba(255,200,200,0.95)',
+    marginTop: 10,
   },
   paymentCard: {
     backgroundColor: Colors.surface,
@@ -514,6 +784,99 @@ const styles = StyleSheet.create({
   },
   bankFields: {
     gap: 10,
+  },
+  bankFieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  selectInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  selectText: {
+    fontSize: 14,
+    color: Colors.text,
+    flex: 1,
+  },
+  selectPlaceholder: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    flex: 1,
+  },
+  helperText: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxHeight: '80%',
+    backgroundColor: Colors.background,
+    borderRadius: 16,
+    padding: 16,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  bankSearchInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 14,
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  bankScroll: {
+    maxHeight: 280,
+  },
+  bankList: {
+    gap: 0,
+  },
+  bankItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  bankText: {
+    fontSize: 14,
+    color: Colors.text,
+  },
+  emptyBankText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    paddingVertical: 16,
+    textAlign: 'center',
+  },
+  modalClose: {
+    marginTop: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+  },
+  modalCloseText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    fontWeight: '600',
   },
   defaultRow: {
     flexDirection: 'row',
@@ -592,6 +955,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: Colors.success,
+  },
+  earningAmountNegative: {
+    color: Colors.textSecondary,
+  },
+  quickAmounts: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  quickAmountBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+  },
+  quickAmountText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+  },
+  modalSubmitButton: {
+    flex: 1,
   },
   emptyState: {
     paddingVertical: 20,

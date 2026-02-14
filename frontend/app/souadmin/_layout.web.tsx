@@ -9,6 +9,7 @@ const MENU_ITEMS = [
   { label: 'Dashboard', href: '/souadmin/dashboard', path: '/souadmin/dashboard', icon: 'grid' },
   { label: 'Chofè', href: '/souadmin/drivers', path: '/souadmin/drivers', icon: 'car' },
   { label: 'Pasajè', href: '/souadmin/passengers', path: '/souadmin/passengers', icon: 'people' },
+  { label: 'Retrait', href: '/souadmin/retraits', path: '/souadmin/retraits', icon: 'cash' },
   { label: 'Plent', href: '/souadmin/complaints', path: '/souadmin/complaints', icon: 'alert-circle' },
   { label: 'Notifikasyon', href: '/souadmin/notifications', path: '/souadmin/notifications', icon: 'notifications' },
   { label: 'Profil', href: '/souadmin/profile', path: '/souadmin/profile', icon: 'person' },
@@ -32,6 +33,7 @@ export default function AdminSouAdminLayout() {
   const pageTitle =
     pathname?.includes('/souadmin/drivers') ? 'Chofè' :
     pathname?.includes('/souadmin/passengers') ? 'Pasajè' :
+    pathname?.includes('/souadmin/retraits') ? 'Retrait' :
     pathname?.includes('/souadmin/complaints') ? 'Plent' :
     pathname?.includes('/souadmin/notifications') ? 'Notifikasyon' :
     pathname?.includes('/souadmin/profile') ? 'Profil' :

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Dimensions,
   Image,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
@@ -19,23 +20,37 @@ import { driverAPI, profileAPI, rideAPI } from '../../src/services/api';
 import { MapView } from '../../src/components/MapViewWrapper';
 
 const { width } = Dimensions.get('window');
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
 
 export default function DriverHome() {
   const router = useRouter();
   const { user, updateUser } = useAuthStore();
-  const [isOnline, setIsOnline] = useState(user?.is_online || false);
+  // Toujours démarrer hors ligne : le chauffeur doit cliquer "Kòmanse travay" pour être en ligne
+  const [isOnline, setIsOnline] = useState(false);
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [pendingRides, setPendingRides] = useState<any[]>([]);
   const [activeRide, setActiveRide] = useState<any | null>(null);
   const [todayStats, setTodayStats] = useState({ revenue: 0, ridesCount: 0 });
+  const hasForcedOfflineThisSession = useRef(false);
+
+  // À la première ouverture de l'écran (ouverture app), forcer hors ligne une seule fois
+  useEffect(() => {
+    if (user?.user_type !== 'driver' || !user?.id || hasForcedOfflineThisSession.current) return;
+    hasForcedOfflineThisSession.current = true;
+    let mounted = true;
+    (async () => {
+      try {
+        await driverAPI.updateOnlineStatus(user.id, false);
+        if (mounted) updateUser({ is_online: false });
+      } catch (_) {
+        if (mounted) updateUser({ is_online: false });
+      }
+    })();
+    return () => { mounted = false; };
+  }, [user?.id, user?.user_type]);
 
   const mapImageUrl = useMemo(() => {
     const lat = location?.coords.latitude ?? 18.5944;
     const lng = location?.coords.longitude ?? -72.3074;
-    if (MAPBOX_TOKEN) {
-      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff3b30(${lng},${lat})/${lng},${lat},14,0/600x300?access_token=${MAPBOX_TOKEN}`;
-    }
     return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=14&size=600x300&markers=${lat},${lng},red-pushpin`;
   }, [location]);
 
@@ -83,7 +98,7 @@ export default function DriverHome() {
       }
     };
     fetchRides();
-    const timer = setInterval(fetchRides, 12000);
+    const timer = setInterval(fetchRides, 6000);
     return () => {
       active = false;
       clearInterval(timer);
@@ -122,6 +137,30 @@ export default function DriverHome() {
 
   const goToCurrentRide = () => router.push('/driver/current-ride');
 
+  const goToNavigate = (ride: any) => {
+    const lat = ride.pickup_lat ?? 0;
+    const lng = ride.pickup_lng ?? 0;
+    router.replace({
+      pathname: '/driver/navigate',
+      params: {
+        pickupLat: String(lat),
+        pickupLng: String(lng),
+        destLat: String(ride.destination_lat ?? 0),
+        destLng: String(ride.destination_lng ?? 0),
+        pickupAddress: ride.pickup_address || '',
+        destAddress: ride.destination_address || '',
+        passengerName: ride.passenger_name || 'Pasaje',
+        rideId: ride.id,
+        openGps: '1',
+      },
+    });
+    // Ouvrir le GPS (Google Maps) vers le passager
+    if (lat && lng) {
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+      Linking.openURL(url).catch(() => {});
+    }
+  };
+
   const handleAcceptRide = async (ride: any) => {
     try {
       await rideAPI.accept(ride.id);
@@ -130,8 +169,8 @@ export default function DriverHome() {
       const activeStatuses = new Set(['accepted', 'arrived', 'started']);
       setActiveRide(rides.find((r: any) => activeStatuses.has(r.status)) || null);
       setPendingRides(rides.filter((r: any) => r.status === 'pending'));
-      Alert.alert('Siksè', 'Ou aksepte kous la.');
-      goToCurrentRide();
+      Alert.alert('Siksè', 'Ou aksepte kous la. GPS la ap ouvri.');
+      goToNavigate(ride);
     } catch (error: any) {
       const message = error.response?.data?.detail || 'Pa kapab aksepte kous';
       if (String(message).includes('active ride')) {
@@ -156,6 +195,13 @@ export default function DriverHome() {
       Alert.alert('Erè', error.response?.data?.detail || 'Pa kapab anile kous');
     }
   };
+
+  // Redirection immédiate si le chauffeur n'est pas approuvé (documents non vérifiés par admin)
+  useEffect(() => {
+    if (user?.status && user.status !== 'approved') {
+      router.replace('/driver/pending');
+    }
+  }, [user?.status, router]);
 
   useEffect(() => {
     let active = true;
@@ -234,8 +280,12 @@ export default function DriverHome() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Header: Logo TapTapGo + statut An liy */}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Header: Logo bien lisible + statut An liy */}
         <View style={styles.header}>
           <View style={styles.logoRow}>
             <Image
@@ -243,7 +293,6 @@ export default function DriverHome() {
               style={styles.logoImage}
               resizeMode="contain"
             />
-            <Text style={styles.logoText}>TapTapGo</Text>
           </View>
           <View style={styles.statusBadge}>
             <View style={[styles.statusDot, isOnline && styles.statusDotOnline]} />
@@ -251,11 +300,32 @@ export default function DriverHome() {
           </View>
         </View>
 
-        {/* Bouton principal: Kòmanse travay */}
+        {/* Bouton principal: Kòmanse travay — désactivé tant que documents non vérifiés/approuvés */}
+        {user?.status !== 'approved' && (
+          <View style={styles.approvalBanner}>
+            <Ionicons name="document-text-outline" size={20} color={Colors.warning} />
+            <Text style={styles.approvalBannerText}>
+              Ou pa ka kòmanse travay toutan dokiman ou poko verifye ak apwouve pa admin (marque ou oubyen TapTapGo).
+            </Text>
+            <TouchableOpacity
+              style={styles.approvalBannerButton}
+              onPress={() => router.push('/driver/documents')}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.approvalBannerButtonText}>Voye dokiman</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         <TouchableOpacity
-          style={styles.mainButton}
+          style={[
+            styles.mainButton,
+            user?.status !== 'approved' && styles.mainButtonDisabled,
+          ]}
           onPress={toggleOnlineStatus}
           activeOpacity={0.85}
+          disabled={user?.status !== 'approved'}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Text style={styles.mainButtonText}>
             {isOnline ? 'Sispann travay' : 'Kòmanse travay'}
@@ -329,10 +399,20 @@ export default function DriverHome() {
               </Text>
             </View>
             <View style={styles.rideActions}>
-              <TouchableOpacity style={styles.acceptButton} onPress={goToCurrentRide}>
+              <TouchableOpacity
+                style={styles.acceptButton}
+                onPress={goToCurrentRide}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.acceptText}>Ale nan kous</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelRide(activeRide)}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => handleCancelRide(activeRide)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.cancelText}>Anile</Text>
               </TouchableOpacity>
             </View>
@@ -357,10 +437,20 @@ export default function DriverHome() {
                   </Text>
                 </View>
                 <View style={styles.rideActions}>
-                  <TouchableOpacity style={styles.acceptButton} onPress={() => handleAcceptRide(ride)}>
+                  <TouchableOpacity
+                    style={styles.acceptButton}
+                    onPress={() => handleAcceptRide(ride)}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    activeOpacity={0.7}
+                  >
                     <Text style={styles.acceptText}>Aksepte</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.cancelButton} onPress={() => handleCancelRide(ride)}>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => handleCancelRide(ride)}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    activeOpacity={0.7}
+                  >
                     <Text style={styles.cancelText}>Anile</Text>
                   </TouchableOpacity>
                 </View>
@@ -392,16 +482,10 @@ const styles = StyleSheet.create({
   logoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   logoImage: {
-    width: 36,
-    height: 36,
-  },
-  logoText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: Colors.primary,
+    width: 140,
+    height: 44,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -425,6 +509,7 @@ const styles = StyleSheet.create({
   mainButton: {
     backgroundColor: Colors.primary,
     borderRadius: 14,
+    minHeight: 52,
     paddingVertical: 16,
     alignItems: 'center',
     justifyContent: 'center',
@@ -434,6 +519,39 @@ const styles = StyleSheet.create({
   mainButtonText: {
     fontSize: 18,
     fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  mainButtonDisabled: {
+    backgroundColor: Colors.textSecondary,
+    opacity: 0.8,
+  },
+  approvalBanner: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: Colors.warning,
+    ...Shadows.small,
+  },
+  approvalBannerText: {
+    fontSize: 14,
+    color: Colors.text,
+    lineHeight: 20,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  approvalBannerButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.secondary,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  approvalBannerButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#FFFFFF',
   },
   mapWrapper: {
@@ -576,9 +694,12 @@ const styles = StyleSheet.create({
   },
   acceptButton: {
     backgroundColor: Colors.success,
+    minHeight: 44,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   acceptText: {
     color: 'white',
@@ -587,9 +708,12 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     backgroundColor: Colors.error,
+    minHeight: 44,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cancelText: {
     color: 'white',

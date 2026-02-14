@@ -14,6 +14,7 @@ const MENU_ITEMS = [
   { label: 'Administratè', href: '/superadmin/admins', path: '/superadmin/admins', icon: 'people' },
   { label: 'Chofè', href: '/superadmin/drivers', path: '/superadmin/drivers', icon: 'car' },
   { label: 'Pasajè', href: '/superadmin/passengers', path: '/superadmin/passengers', icon: 'person' },
+  { label: 'Retrait', href: '/superadmin/retraits', path: '/superadmin/retraits', icon: 'cash' },
   { label: 'Plent', href: '/superadmin/complaints', path: '/superadmin/complaints', icon: 'alert-circle' },
   { label: 'Ajoute Vil', href: '/superadmin/cities', path: '/superadmin/cities', icon: 'location' },
   { label: 'Paramèt', href: '/superadmin/settings', path: '/superadmin/settings', icon: 'settings' },

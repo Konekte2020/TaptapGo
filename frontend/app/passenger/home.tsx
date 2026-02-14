@@ -19,10 +19,10 @@ import { Calendar } from 'react-native-calendars';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { useAuthStore } from '../../src/store/authStore';
 import { rideAPI, cityAPI } from '../../src/services/api';
-import { MapView, Marker, Polyline } from '../../src/components/MapViewWrapper';
+import { Map, MapRef } from '../../src/components/Map';
+import { searchAddress, geocodeAddress } from '../../src/utils/geocoding';
 
 const { width } = Dimensions.get('window');
-const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
 
 const pad2 = (value: number) => value.toString().padStart(2, '0');
 const formatDate = (value: Date) => `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
@@ -69,7 +69,7 @@ export default function PassengerHome() {
   const [scheduledDate, setScheduledDate] = useState(new Date());
   const [scheduledTime, setScheduledTime] = useState(new Date());
   const [paymentMethod, setPaymentMethod] = useState<'cash'>('cash');
-  const mapRef = useRef<MapView | null>(null);
+  const mapRef = useRef<MapRef | null>(null);
   const timeOptions = useMemo(() => {
     const options: string[] = [];
     for (let hour = 6; hour <= 22; hour += 1) {
@@ -176,22 +176,14 @@ export default function PassengerHome() {
     setIsSearching(true);
     const timer = setTimeout(async () => {
       try {
-        if (!MAPBOX_TOKEN) {
-          setDestinationSuggestions([]);
-          return;
-        }
         const lat = location?.coords.latitude;
         const lng = location?.coords.longitude;
-        const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=6&types=address,place,locality,neighborhood${proximity}`;
-        const response = await fetch(url);
-        const data = await response.json();
-        const suggestions = (data?.features || []).map((item: any) => ({
-          label: item.place_name as string,
-          lat: item.center?.[1] ?? 0,
-          lng: item.center?.[0] ?? 0,
-        }));
-        setDestinationSuggestions(suggestions.filter((item: any) => item.lat && item.lng));
+        const results = await searchAddress(trimmed, {
+          limit: 6,
+          proximityLat: lat,
+          proximityLng: lng,
+        });
+        setDestinationSuggestions(results);
       } catch (error) {
         console.error('Autocomplete error:', error);
         setDestinationSuggestions([]);
@@ -248,22 +240,14 @@ export default function PassengerHome() {
     setIsSearchingPickup(true);
     const timer = setTimeout(async () => {
       try {
-        if (!MAPBOX_TOKEN) {
-          setPickupSuggestions([]);
-          return;
-        }
         const lat = location?.coords.latitude;
         const lng = location?.coords.longitude;
-        const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=6&types=address,place,locality,neighborhood${proximity}`;
-        const response = await fetch(url);
-        const data = await response.json();
-        const suggestions = (data?.features || []).map((item: any) => ({
-          label: item.place_name as string,
-          lat: item.center?.[1] ?? 0,
-          lng: item.center?.[0] ?? 0,
-        }));
-        setPickupSuggestions(suggestions.filter((item: any) => item.lat && item.lng));
+        const results = await searchAddress(trimmed, {
+          limit: 6,
+          proximityLat: lat,
+          proximityLng: lng,
+        });
+        setPickupSuggestions(results);
       } catch (error) {
         console.error('Pickup autocomplete error:', error);
         setPickupSuggestions([]);
@@ -275,15 +259,6 @@ export default function PassengerHome() {
     return () => clearTimeout(timer);
   }, [pickup, showPickupSuggestions, location]);
 
-  const mapImageUrl = useMemo(() => {
-    const lat = location?.coords.latitude ?? 18.5944;
-    const lng = location?.coords.longitude ?? -72.3074;
-    if (MAPBOX_TOKEN) {
-      return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff3b30(${lng},${lat})/${lng},${lat},14,0/600x300?access_token=${MAPBOX_TOKEN}`;
-    }
-    return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=14&size=600x300&markers=${lat},${lng},red-pushpin`;
-  }, [location]);
-
   const mapRegion = useMemo(
     () => ({
       latitude: location?.coords.latitude ?? 18.5944,
@@ -293,6 +268,46 @@ export default function PassengerHome() {
     }),
     [location]
   );
+
+  const mapMarkers = useMemo(() => {
+    const list: Array<{
+      id: string;
+      latitude: number;
+      longitude: number;
+      title?: string;
+      description?: string;
+      pinColor?: string;
+      icon?: { type: 'ionicons'; name: 'car' | 'bicycle' };
+    }> = [];
+    if (pickupCoords) {
+      list.push({
+        id: 'pickup',
+        latitude: pickupCoords.lat,
+        longitude: pickupCoords.lng,
+        title: 'Pran',
+        pinColor: Colors.success,
+      });
+    }
+    if (destinationCoords) {
+      list.push({
+        id: 'destination',
+        latitude: destinationCoords.lat,
+        longitude: destinationCoords.lng,
+        title: 'Destinasyon',
+        pinColor: Colors.primary,
+      });
+    }
+    if (driverMarker) {
+      list.push({
+        id: 'driver',
+        latitude: driverMarker.latitude,
+        longitude: driverMarker.longitude,
+        title: 'Chofè',
+        icon: { type: 'ionicons', name: driverVehicle === 'moto' ? 'bicycle' : 'car' },
+      });
+    }
+    return list;
+  }, [pickupCoords, destinationCoords, driverMarker, driverVehicle]);
 
   const calculateDistanceKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
     const toRad = (value: number) => (value * Math.PI) / 180;
@@ -309,31 +324,22 @@ export default function PassengerHome() {
 
   const resolveDestinationCoords = async () => {
     if (destinationCoords) return destinationCoords;
-    if (!MAPBOX_TOKEN) return null;
     const trimmed = destination.trim();
     if (!trimmed) return null;
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=1&types=address,place,locality,neighborhood`;
-    const response = await fetch(url);
-    const data = await response.json();
-    const first = data?.features?.[0];
-    if (!first?.center?.length) return null;
-    return { lat: first.center[1], lng: first.center[0] };
+    return geocodeAddress(trimmed, {
+      proximityLat: location?.coords.latitude,
+      proximityLng: location?.coords.longitude,
+    });
   };
 
   const resolvePickupCoords = async () => {
     if (pickupCoords) return pickupCoords;
-    if (!MAPBOX_TOKEN) return null;
     const trimmed = pickup.trim();
     if (!trimmed) return null;
-    const lat = location?.coords.latitude;
-    const lng = location?.coords.longitude;
-    const proximity = lat && lng ? `&proximity=${lng},${lat}` : '';
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${MAPBOX_TOKEN}&country=ht&limit=1&types=address,place,locality,neighborhood${proximity}`;
-    const response = await fetch(url);
-    const data = await response.json();
-    const first = data?.features?.[0];
-    if (!first?.center?.length) return null;
-    return { lat: first.center[1], lng: first.center[0] };
+    return geocodeAddress(trimmed, {
+      proximityLat: location?.coords.latitude,
+      proximityLng: location?.coords.longitude,
+    });
   };
 
   const getEstimate = async () => {
@@ -349,11 +355,6 @@ export default function PassengerHome() {
       Alert.alert('Erè', 'Nou pa jwenn pozisyon ou ankò.');
       return;
     }
-    if (!MAPBOX_TOKEN) {
-      Alert.alert('Erè', 'Map la pa disponib. Tanpri ajoute kle Mapbox.');
-      return;
-    }
-
     setLoading(true);
     try {
       const resolvedPickup = await resolvePickupCoords();
@@ -369,24 +370,17 @@ export default function PassengerHome() {
       setPickupCoords(resolvedPickup);
       setDestinationCoords(resolvedDestination);
 
-      const directionsUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${resolvedPickup.lng},${resolvedPickup.lat};${resolvedDestination.lng},${resolvedDestination.lat}?access_token=${MAPBOX_TOKEN}&geometries=geojson&overview=simplified`;
-      const directionsResponse = await fetch(directionsUrl);
-      const directionsData = await directionsResponse.json();
-      const route = directionsData?.routes?.[0];
-      const routePoints = route?.geometry?.coordinates || [];
-      setRouteCoords(
-        routePoints.map((point: number[]) => ({
-          latitude: point[1],
-          longitude: point[0],
-        }))
-      );
-      const distanceKm = route?.distance ? route.distance / 1000 : calculateDistanceKm(
+      const distanceKm = calculateDistanceKm(
         resolvedPickup.lat,
         resolvedPickup.lng,
         resolvedDestination.lat,
         resolvedDestination.lng
       );
-      const durationMin = route?.duration ? route.duration / 60 : Math.max(5, distanceKm * 3);
+      const durationMin = Math.max(5, distanceKm * 3);
+      setRouteCoords([
+        { latitude: resolvedPickup.lat, longitude: resolvedPickup.lng },
+        { latitude: resolvedDestination.lat, longitude: resolvedDestination.lng },
+      ]);
 
       const response = await rideAPI.estimate({
         pickup_lat: resolvedPickup.lat,
@@ -508,51 +502,15 @@ export default function PassengerHome() {
 
         {/* Map */}
         <View style={styles.mapPlaceholder}>
-          {MapView && Marker && Polyline ? (
-            <MapView
-              ref={(ref) => {
-                mapRef.current = ref;
-              }}
-              style={styles.mapImage}
-              region={mapRegion}
-              showsUserLocation
-              showsMyLocationButton
-              loadingEnabled
-            >
-              {routeCoords.length > 1 && Polyline && (
-                <Polyline
-                  coordinates={routeCoords}
-                  strokeWidth={4}
-                  strokeColor={Colors.primary}
-                />
-              )}
-              {pickupCoords && Marker && (
-                <Marker
-                  coordinate={{ latitude: pickupCoords.lat, longitude: pickupCoords.lng }}
-                  pinColor={Colors.success}
-                />
-              )}
-              {destinationCoords && Marker && (
-                <Marker
-                  coordinate={{ latitude: destinationCoords.lat, longitude: destinationCoords.lng }}
-                  pinColor={Colors.primary}
-                />
-              )}
-              {driverMarker && Marker && (
-                <Marker coordinate={driverMarker}>
-                  <View style={styles.driverMarker}>
-                    <Ionicons
-                      name={driverVehicle === 'moto' ? 'bicycle' : 'car'}
-                      size={18}
-                      color="white"
-                    />
-                  </View>
-                </Marker>
-              )}
-            </MapView>
-          ) : (
-            <Image source={{ uri: mapImageUrl }} style={styles.mapImage} />
-          )}
+          <Map
+            ref={mapRef}
+            initialRegion={mapRegion}
+            markers={mapMarkers}
+            route={routeCoords}
+            style={styles.mapImage}
+            routeStrokeColor={Colors.primary}
+            routeStrokeWidth={4}
+          />
           {nearbyDrivers.length > 0 && (
             <View style={styles.driversCount}>
               <Ionicons name="car" size={16} color="white" />

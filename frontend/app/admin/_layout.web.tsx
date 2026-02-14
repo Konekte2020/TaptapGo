@@ -11,6 +11,7 @@ const MENU_ITEMS = [
   { label: 'Pasajè', href: '/admin/passengers', path: '/admin/passengers', icon: 'people' },
   { label: 'Pri', href: '/admin/pricing', path: '/admin/pricing', icon: 'pricetag' },
   { label: 'Peman', href: '/admin/payments', path: '/admin/payments', icon: 'card' },
+  { label: 'Retrait', href: '/admin/retraits', path: '/admin/retraits', icon: 'cash' },
   { label: 'SouAdmin', href: '/admin/subadmins', path: '/admin/subadmins', icon: 'people' },
   { label: 'Plent', href: '/admin/complaints', path: '/admin/complaints', icon: 'alert-circle' },
   { label: 'Profil', href: '/admin/profile', path: '/admin/profile', icon: 'person' },
@@ -28,6 +29,7 @@ export default function AdminLayout() {
     pathname?.includes('/admin/passengers') ? 'Pasajè' :
     pathname?.includes('/admin/pricing') ? 'Pri' :
     pathname?.includes('/admin/payments') ? 'Peman' :
+    pathname?.includes('/admin/retraits') ? 'Retrait' :
     pathname?.includes('/admin/subadmins') ? 'SouAdmin' :
     pathname?.includes('/admin/complaints') ? 'Plent' :
     pathname?.includes('/admin/profile') ? 'Profil' :
@@ -35,7 +37,7 @@ export default function AdminLayout() {
 
   const isTapTapGoAdmin = user?.user_type === 'admin' && !user?.brand_name;
   const visibleMenuItems = user?.user_type === 'subadmin' || isTapTapGoAdmin
-    ? MENU_ITEMS.filter((item) => ['Dashboard', 'Chofè', 'Pasajè', 'Plent', 'Profil'].includes(item.label))
+    ? MENU_ITEMS.filter((item) => ['Dashboard', 'Chofè', 'Pasajè', 'Retrait', 'Plent', 'Profil'].includes(item.label))
     : MENU_ITEMS;
 
   useEffect(() => {

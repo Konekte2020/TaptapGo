@@ -48,9 +48,9 @@ if "%PYEXE%"=="" if "%PY%"=="" (
 cd /d "%~dp0"
 if defined PYEXE (
     echo Python trouve ^(fichier^). Demarrage du serveur ^(port %PORT%^)...
-    "%PYEXE%" -m uvicorn server:app --reload --port %PORT%
+    "%PYEXE%" -m uvicorn server:app --reload --host 0.0.0.0 --port %PORT%
 ) else (
     echo Demarrage du serveur ^(port %PORT%^) avec: %PY% -m uvicorn ...
-    "%PY%" -m uvicorn server:app --reload --port %PORT%
+    "%PY%" -m uvicorn server:app --reload --host 0.0.0.0 --port %PORT%
 )
 pause

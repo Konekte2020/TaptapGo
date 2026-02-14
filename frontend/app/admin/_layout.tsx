@@ -58,6 +58,15 @@ export default function AdminLayout() {
         }}
       />
       <Tabs.Screen
+        name="retraits"
+        options={{
+          title: 'Retrait',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cash" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="support-messages"
         options={{
           title: 'Mesaj Sipò',

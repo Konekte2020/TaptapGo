@@ -173,11 +173,12 @@ export default function SuperAdminWhiteLabel() {
       });
       setBrands(filtered);
 
-      // Si aucune marque sélectionnée mais qu'il existe des marques avec logo, sélectionner la première
+      // Si une seule marque a un logo, la sélectionner par défaut (bouton Jenere APK actif après refresh)
       setCreatedBrandName((prev) => {
         if (prev) return prev;
-        const withLogo = filtered.find((b: any) => b.logo);
-        return withLogo ? (withLogo.brand_name || '') : '';
+        const withLogo = filtered.filter((b: any) => b.logo);
+        if (withLogo.length === 1) return withLogo[0].brand_name || '';
+        return '';
       });
     } catch (error) {
       console.error('Fetch white label error:', error);

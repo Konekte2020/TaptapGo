@@ -80,4 +80,4 @@ if (-not $pythonExe) {
 
 Set-Location $scriptDir
 Write-Host "Python trouve ($how). Demarrage du serveur (port $port)..." -ForegroundColor Green
-& $pythonExe -m uvicorn server:app --reload --port $port
+& $pythonExe -m uvicorn server:app --reload --host 0.0.0.0 --port $port

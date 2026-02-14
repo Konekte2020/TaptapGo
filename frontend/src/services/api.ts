@@ -34,15 +34,20 @@ const resolveWebUrl = () => {
 
 const resolvedWebUrl = normalizeUrl(resolveWebUrl());
 
-export const API_URL =
+const _API_URL =
   Platform.OS === 'android'
     ? androidUrl || nativeUrl || DEFAULT_ANDROID_URL || baseUrlFromEnv
     : Platform.OS === 'ios'
       ? iosUrl || nativeUrl || DEFAULT_IOS_URL || baseUrlFromEnv
       : resolvedWebUrl || 'http://localhost:8000';
 
+export const API_URL = normalizeUrl(_API_URL);
+
+// Base URL pour les appels API : éviter double /api si l'URL se termine déjà par /api
+const apiBaseURL = API_URL.toLowerCase().endsWith('/api') ? API_URL : `${API_URL}/api`;
+
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: apiBaseURL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -169,6 +174,30 @@ export const rideAPI = {
   updateStatus: (id: string, status: string, reason?: string) =>
     api.put(`/rides/${id}/status`, { status, reason }),
   rate: (id: string, rating: number, comment?: string) => api.post(`/rides/${id}/rate`, { rating, comment }),
+};
+
+// Wallet & retraits (chauffeur)
+export const walletAPI = {
+  get: () => api.get<{
+    wallet: { balance: number; balance_en_attente: number; total_gagne: number; total_retire: number };
+    retrait_possible: boolean;
+    raison?: string;
+    prochain_retrait_ts?: number;
+    type_retrait: string;
+    message: string;
+    regles: { montant_minimum: number; seuil_automatique: number; delai_entre_retraits_heures: number; frais_retrait: number };
+  }>('/wallet'),
+  getTransactions: (limit?: number) => api.get<{ transactions: any[] }>('/wallet/transactions', { params: { limit } }),
+  withdraw: (montant: number, methode: 'moncash' | 'natcash' | 'bank') =>
+    api.post('/wallet/withdraw', { montant, methode }),
+};
+
+// Admin / Superadmin: retraits
+export const retraitsAPI = {
+  list: (params?: { statut?: string; methode?: string; min_montant?: number }) =>
+    api.get<{ retraits: any[]; stats: { en_attente_count: number; en_attente_total: number; traites_aujourdhui_count: number; traites_aujourdhui_total: number } }>('/admin/retraits', { params }),
+  traiter: (retraitId: string) => api.post(`/admin/retraits/${retraitId}/traiter`),
+  annuler: (retraitId: string) => api.post(`/admin/retraits/${retraitId}/annuler`),
 };
 
 // Admin APIs
@@ -312,6 +341,16 @@ export const profileAPI = {
     default_method?: string;
   }) =>
     api.put('/profile', data),
+};
+
+// Véhicules du chauffeur (plusieurs: machin + moto)
+export const driverVehiclesAPI = {
+  getAll: () => api.get<{ vehicles: Array<{ id: string; is_primary: boolean; vehicle_type: string; vehicle_brand: string; vehicle_model: string; plate_number: string; vehicle_color?: string; created_at?: string }> }>('/drivers/me/vehicles'),
+  add: (data: { vehicle_type: string; vehicle_brand: string; vehicle_model: string; plate_number: string; vehicle_color?: string }) =>
+    api.post('/drivers/me/vehicles', data),
+  update: (vehicleId: string, data: { vehicle_type?: string; vehicle_brand?: string; vehicle_model?: string; plate_number?: string; vehicle_color?: string }) =>
+    api.put(`/drivers/me/vehicles/${vehicleId}`, data),
+  delete: (vehicleId: string) => api.delete(`/drivers/me/vehicles/${vehicleId}`),
 };
 
 export const notificationsAPI = {

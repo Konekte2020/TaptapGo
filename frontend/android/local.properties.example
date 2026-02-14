@@ -1,0 +1,10 @@
+# Copier ce fichier en local.properties et remplir les valeurs.
+# Ne jamais committer local.properties (il est dans .gitignore).
+
+# Chemin du SDK Android (optionnel si ANDROID_HOME est défini)
+# Windows : sdk.dir=C\:\\Users\\TON_USER\\AppData\\Local\\Android\\Sdk
+# sdk.dir=
+
+# Token secret Mapbox pour télécharger le SDK (OBLIGATOIRE pour le build Android).
+# Créer un token avec scope "Downloads: Read" : https://account.mapbox.com/access-tokens/
+MAPBOX_DOWNLOADS_TOKEN=sk.xxx

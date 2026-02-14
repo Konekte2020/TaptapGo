@@ -24,6 +24,7 @@ export default function RoleSelect() {
             style={styles.optionCard}
             onPress={() => router.push('/auth/login?type=passenger')}
             activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <View style={[styles.iconContainer, { backgroundColor: Colors.primary }]}>
               <Ionicons name="person" size={40} color="white" />
@@ -36,12 +37,13 @@ export default function RoleSelect() {
             style={styles.optionCard}
             onPress={() => router.push('/auth/login?type=driver')}
             activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <View style={[styles.iconContainer, { backgroundColor: Colors.secondary }]}>
               <Ionicons name="car" size={40} color="white" />
             </View>
             <Text style={styles.optionTitle}>Mwen se CHOFÈ</Text>
-            <Text style={styles.optionDesc}>Kondüi ak fè lajan</Text>
+            <Text style={styles.optionDesc}>Kondui ak fè lajan</Text>
           </TouchableOpacity>
         </View>
 
@@ -62,8 +64,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logo: {
-    width: 300,
-    height: 120,
+    width: 250,
+    height: 100,
     marginBottom: 30,
   },
   title: {
@@ -84,8 +86,10 @@ const styles = StyleSheet.create({
   optionCard: {
     backgroundColor: Colors.background,
     borderRadius: 16,
+    minHeight: 56,
     padding: 24,
     alignItems: 'center',
+    justifyContent: 'center',
     ...Shadows.medium,
   },
   iconContainer: {

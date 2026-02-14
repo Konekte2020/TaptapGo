@@ -1,26 +1,41 @@
 {
-  "cli": { "version": ">= 8.0.0" },
+  "cli": {
+    "version": ">= 8.0.0"
+  },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleDebug",
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://taptapgo.onrender.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://puncojujdabpljgbzkxg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      }
+    },
     "preview": {
       "distribution": "internal",
-      "android": { "buildType": "apk" },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "REPLACE_ME",
-        "EXPO_PUBLIC_BACKEND_URL_ANDROID": "REPLACE_ME",
-        "EXPO_PUBLIC_MAPBOX_TOKEN": "REPLACE_ME",
-        "EXPO_PUBLIC_BRAND_ID": "REPLACE_ME",
-        "EXPO_PUBLIC_BRAND_NAME": "REPLACE_ME"
+        "EXPO_PUBLIC_BACKEND_URL": "https://taptapgo.onrender.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://puncojujdabpljgbzkxg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
       }
     },
     "production": {
       "distribution": "store",
-      "android": { "buildType": "app-bundle" },
+      "android": {
+        "buildType": "app-bundle"
+      },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "REPLACE_ME",
-        "EXPO_PUBLIC_BACKEND_URL_ANDROID": "REPLACE_ME",
-        "EXPO_PUBLIC_MAPBOX_TOKEN": "REPLACE_ME",
-        "EXPO_PUBLIC_BRAND_ID": "REPLACE_ME",
-        "EXPO_PUBLIC_BRAND_NAME": "REPLACE_ME"
+        "EXPO_PUBLIC_BACKEND_URL": "https://taptapgo.onrender.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://puncojujdabpljgbzkxg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
       }
     }
   },

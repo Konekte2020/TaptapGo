@@ -19,9 +19,9 @@
 # Obligatoire pour build cloud + submit depuis le serveur
 EXPO_TOKEN=votre_expo_access_token
 
-# Optionnel : URL de l’API pour les builds (injectée dans l’app)
-EXPO_PUBLIC_BACKEND_URL=https://votre-api.com
-TAPTAPGO_PUBLIC_BACKEND_URL=https://votre-api.com
+# Optionnel : URL de l’API pour les builds (injectée dans l’app) — prod : https://taptapgo.onrender.com
+EXPO_PUBLIC_BACKEND_URL=https://taptapgo.onrender.com
+TAPTAPGO_PUBLIC_BACKEND_URL=https://taptapgo.onrender.com
 ```
 
 ## Workflow dans l’app SuperAdmin

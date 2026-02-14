@@ -57,14 +57,20 @@ export default function Login() {
       
       if (response.data.success) {
         await login(response.data.user, response.data.token);
-        
+        const u = response.data.user;
+
         // Navigate to appropriate dashboard
-        switch (response.data.user.user_type) {
+        switch (u.user_type) {
           case 'passenger':
             router.replace('/passenger/home');
             break;
           case 'driver':
-            router.replace('/driver/home');
+            // Chauffeur sans documents vérifiés/approuvés par admin ne peut pas travailler
+            if (u.status !== 'approved') {
+              router.replace('/driver/pending');
+            } else {
+              router.replace('/driver/home');
+            }
             break;
           case 'admin':
             router.replace('/admin/dashboard');
@@ -105,8 +111,15 @@ export default function Login() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+          >
             <Ionicons name="arrow-back" size={24} color={Colors.text} />
           </TouchableOpacity>
 
@@ -140,7 +153,10 @@ export default function Login() {
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
               />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
                 <Ionicons
                   name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
@@ -149,7 +165,11 @@ export default function Login() {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.forgotButton} onPress={handleForgotPassword}>
+            <TouchableOpacity
+              style={styles.forgotButton}
+              onPress={handleForgotPassword}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
               <Text style={styles.forgotText}>Modpas bliye?</Text>
             </TouchableOpacity>
 
@@ -157,6 +177,8 @@ export default function Login() {
               style={[styles.loginButton, loading && styles.disabledButton]}
               onPress={handleLogin}
               disabled={loading}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.8}
             >
               {loading ? (
                 <ActivityIndicator color="white" />
@@ -168,7 +190,10 @@ export default function Login() {
             {(userType === 'passenger' || userType === 'driver') && (
               <View style={styles.registerContainer}>
                 <Text style={styles.registerText}>Ou pa gen kont? </Text>
-                <TouchableOpacity onPress={goToRegister}>
+                <TouchableOpacity
+                  onPress={goToRegister}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
                   <Text style={styles.registerLink}>Enskri</Text>
                 </TouchableOpacity>
               </View>

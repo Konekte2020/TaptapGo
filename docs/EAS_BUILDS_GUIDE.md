@@ -26,22 +26,20 @@ Guide pas à pas pour configurer et lancer les builds EAS de l’app TapTapGo.
 
 ## 2. Configurer les variables (EAS Secrets)
 
-Les builds utilisent les variables définies dans `eas.json` (actuellement `REPLACE_ME`). Il faut leur donner de **vraies valeurs** via les **EAS Secrets** (recommandé, sans mettre de secrets dans le repo).
-
-Depuis le dossier **frontend** :
+Les builds utilisent les **EAS Secrets** (aucune valeur en dur dans le repo). Depuis le dossier **frontend** :
 
 ```bash
 cd frontend
 ```
 
-Créer chaque secret (remplace les valeurs par les tiennes) :
+Créer chaque secret (backend prod : **https://taptapgo.onrender.com**) :
 
 ```bash
-# URL de ton API backend (HTTPS une fois déployée)
-eas secret:create --name EXPO_PUBLIC_BACKEND_URL --value "https://api.taptapgoht.com" --scope project
+# URL de l’API backend (prod)
+eas secret:create --name EXPO_PUBLIC_BACKEND_URL --value "https://taptapgo.onrender.com" --scope project
 
-# Même URL pour Android (souvent identique)
-eas secret:create --name EXPO_PUBLIC_BACKEND_URL_ANDROID --value "https://api.taptapgoht.com" --scope project
+# Même URL pour Android
+eas secret:create --name EXPO_PUBLIC_BACKEND_URL_ANDROID --value "https://taptapgo.onrender.com" --scope project
 
 # Token Mapbox (cartes) – créer sur https://account.mapbox.com/
 eas secret:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "pk.xxxxxxxxxxxxxxxx" --scope project
@@ -60,7 +58,7 @@ Vérifier les secrets :
 eas secret:list
 ```
 
-Les secrets sont utilisés à la place des valeurs `REPLACE_ME` de `eas.json` lors du build.
+Les secrets sont injectés comme variables d’environnement lors du build EAS.
 
 ---
 

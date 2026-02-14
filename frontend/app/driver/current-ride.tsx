@@ -116,6 +116,17 @@ export default function DriverCurrentRide() {
     }
   };
 
+  const confirmCancel = () => {
+    Alert.alert(
+      'Anile kous',
+      'Ou sèten ou vle anile kous sa a? Pasaje a ap resevwa yon notifikasyon.',
+      [
+        { text: 'Non', style: 'cancel' },
+        { text: 'Wi, anile', style: 'destructive', onPress: () => updateStatus('cancelled') },
+      ]
+    );
+  };
+
   const handleStartRide = () => {
     if (!ride) return;
     const method = ride.payment_method || 'cash';
@@ -143,7 +154,11 @@ export default function DriverCurrentRide() {
         <View style={styles.center}>
           <Ionicons name="car-outline" size={52} color={Colors.textSecondary} />
           <Text style={styles.emptyText}>Pa gen kous aktyèl.</Text>
-          <TouchableOpacity style={styles.backButton} onPress={() => router.replace('/driver/home')}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.replace('/driver/home')}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+          >
             <Text style={styles.backText}>Retounen</Text>
           </TouchableOpacity>
         </View>
@@ -153,10 +168,19 @@ export default function DriverCurrentRide() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Kous aktyèl</Text>
-          <TouchableOpacity style={styles.navButton} onPress={() => openNavigation('pickup')}>
+          <TouchableOpacity
+            style={styles.navButton}
+            onPress={() => openNavigation('pickup')}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            activeOpacity={0.7}
+          >
             <Ionicons name="navigate" size={16} color="white" />
             <Text style={styles.navText}>Ale nan pasaje</Text>
           </TouchableOpacity>
@@ -202,6 +226,8 @@ export default function DriverCurrentRide() {
             <TouchableOpacity
               style={styles.paymentButton}
               onPress={() => openUssd(ride.payment_method)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
             >
               <Text style={styles.paymentButtonText}>
                 Ouvri {ride.payment_method === 'moncash' ? 'MonCash' : 'NatCash'}
@@ -213,28 +239,63 @@ export default function DriverCurrentRide() {
         <View style={styles.actions}>
           {ride.status === 'accepted' && (
             <>
-              <TouchableOpacity style={styles.primary} onPress={() => updateStatus('arrived')}>
+              <TouchableOpacity
+                style={styles.primary}
+                onPress={() => updateStatus('arrived')}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.primaryText}>Mwen Rive</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.danger} onPress={() => updateStatus('cancelled')}>
+              <TouchableOpacity
+                style={styles.danger}
+                onPress={confirmCancel}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.dangerText}>Anile</Text>
               </TouchableOpacity>
             </>
           )}
           {ride.status === 'arrived' && (
             <>
-              <TouchableOpacity style={styles.primary} onPress={handleStartRide}>
+              <TouchableOpacity
+                style={styles.primary}
+                onPress={handleStartRide}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.primaryText}>Kòmanse</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.danger} onPress={() => updateStatus('cancelled')}>
+              <TouchableOpacity
+                style={styles.danger}
+                onPress={confirmCancel}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.dangerText}>Anile</Text>
               </TouchableOpacity>
             </>
           )}
           {ride.status === 'started' && (
-            <TouchableOpacity style={styles.primary} onPress={() => updateStatus('completed')}>
-              <Text style={styles.primaryText}>Fini Kous</Text>
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={styles.primary}
+                onPress={() => updateStatus('completed')}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.primaryText}>Fini Kous</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.danger}
+                onPress={confirmCancel}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dangerText}>Anile</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
       </ScrollView>
@@ -358,8 +419,9 @@ const styles = StyleSheet.create({
   },
   navButton: {
     backgroundColor: Colors.primary,
+    minHeight: 44,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -407,7 +469,8 @@ const styles = StyleSheet.create({
   },
   paymentButton: {
     backgroundColor: Colors.primary,
-    paddingVertical: 10,
+    minHeight: 48,
+    paddingVertical: 12,
     borderRadius: 10,
     marginTop: 10,
     alignItems: 'center',
@@ -422,9 +485,11 @@ const styles = StyleSheet.create({
   },
   primary: {
     backgroundColor: Colors.success,
+    minHeight: 48,
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryText: {
     color: 'white',
@@ -432,9 +497,11 @@ const styles = StyleSheet.create({
   },
   danger: {
     backgroundColor: Colors.error,
+    minHeight: 48,
     paddingVertical: 12,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   dangerText: {
     color: 'white',

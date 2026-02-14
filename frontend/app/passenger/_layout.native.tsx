@@ -1,9 +1,15 @@
 import React from 'react';
+import { Pressable } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../../src/constants/colors';
 
 export default function PassengerLayout() {
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = 56;
+  const tabBarPaddingBottom = Math.max(insets.bottom, 12);
+
   return (
     <Tabs
       screenOptions={{
@@ -13,10 +19,20 @@ export default function PassengerLayout() {
         tabBarStyle: {
           backgroundColor: Colors.background,
           borderTopColor: Colors.border,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: tabBarHeight + tabBarPaddingBottom,
+          paddingBottom: tabBarPaddingBottom,
+          paddingTop: 12,
         },
+        tabBarItemStyle: {
+          minHeight: 52,
+          paddingVertical: 6,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+        },
+        tabBarButton: (props) => (
+          <Pressable {...props} hitSlop={{ top: 28, bottom: 28, left: 20, right: 20 }} />
+        ),
       }}
     >
       <Tabs.Screen

@@ -509,7 +509,7 @@ export default function RegisterDriver() {
           ) : (
             <>
               <Ionicons name="id-card" size={24} color={Colors.textSecondary} />
-              <Text style={styles.documentText}>Pèmi Kondui</Text>
+              <Text style={styles.documentText}>Pèmi Kondwi</Text>
             </>
           )}
         </TouchableOpacity>

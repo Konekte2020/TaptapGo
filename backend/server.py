@@ -73,6 +73,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Règles de retrait (wallet chauffeur)
+REGLES_RETRAIT = {
+    "montant_minimum": 500,
+    "seuil_automatique": 1000,
+    "delai_entre_retraits_heures": 24,
+    "frais_retrait": 0,
+}
+
 def create_notification(user_id: str, user_type: str, title: str, body: str):
     """Create an in-app notification"""
     try:
@@ -85,6 +93,71 @@ def create_notification(user_id: str, user_type: str, title: str, body: str):
         }).execute()
     except Exception as e:
         logger.error(f"Notification error: {e}")
+
+
+def _get_or_create_wallet(chauffeur_id: str) -> dict:
+    """Get or create driver_wallets row; sync balance from drivers.wallet_balance if new."""
+    r = supabase.table("driver_wallets").select("*").eq("chauffeur_id", chauffeur_id).execute()
+    if r.data and len(r.data) > 0:
+        return r.data[0]
+    driver = supabase.table("drivers").select("wallet_balance").eq("id", chauffeur_id).execute()
+    initial = float(driver.data[0].get("wallet_balance") or 0) if driver.data else 0
+    row = {
+        "chauffeur_id": chauffeur_id,
+        "balance": initial,
+        "balance_en_attente": 0,
+        "total_gagne": initial,
+        "total_retire": 0,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    supabase.table("driver_wallets").insert(row).execute()
+    return row
+
+
+def _credit_driver_wallet_after_ride(ride_id: str, driver_id: str, final_price: float, city: Optional[str], admin_id: Optional[str]) -> None:
+    """After ride completed: apply commission, credit driver wallet, insert driver_transaction."""
+    try:
+        commission_pct = 15.0
+        if city:
+            city_row = supabase.table("cities").select("system_commission").eq("name", city).limit(1).execute()
+            if city_row.data:
+                commission_pct = float(city_row.data[0].get("system_commission") or 15)
+        if admin_id:
+            admin_row = supabase.table("admins").select("commission_rate").eq("id", admin_id).limit(1).execute()
+            if admin_row.data and admin_row.data[0].get("commission_rate") is not None:
+                commission_pct = float(admin_row.data[0]["commission_rate"])
+        commission_htg = round(final_price * (commission_pct / 100), 2)
+        gain_chauffeur = round(final_price - commission_htg, 2)
+        wallet = _get_or_create_wallet(driver_id)
+        new_balance = float(wallet.get("balance") or 0) + gain_chauffeur
+        new_total_gagne = float(wallet.get("total_gagne") or 0) + gain_chauffeur
+        supabase.table("driver_wallets").update({
+            "balance": new_balance,
+            "total_gagne": new_total_gagne,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("chauffeur_id", driver_id).execute()
+        supabase.table("drivers").update({
+            "wallet_balance": new_balance,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", driver_id).execute()
+        supabase.table("driver_transactions").insert({
+            "chauffeur_id": driver_id,
+            "ride_id": ride_id,
+            "type_txn": "course_completed",
+            "montant": gain_chauffeur,
+            "montant_total": final_price,
+            "commission_taptapgo": commission_htg,
+            "gain_chauffeur": gain_chauffeur,
+            "statut": "ok",
+        }).execute()
+        create_notification(
+            driver_id,
+            "driver",
+            "Revni ajoute",
+            f"+{gain_chauffeur:.0f} HTG ajoute nan wallet ou. Balans: {new_balance:.0f} HTG.",
+        )
+    except Exception as e:
+        logger.error(f"Credit driver wallet after ride error: {e}")
 
 
 def calculate_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -180,6 +253,13 @@ class PasswordResetRequest(BaseModel):
     identifier: str  # phone or email
     channel: str  # 'phone' or 'email'
     user_type: str  # 'passenger', 'driver', 'admin', 'subadmin', 'superadmin'
+
+class DriverVehicleCreate(BaseModel):
+    vehicle_type: str  # 'moto' or 'car'
+    vehicle_brand: str
+    vehicle_model: str
+    plate_number: str
+    vehicle_color: Optional[str] = None
 
 class PasswordResetConfirm(BaseModel):
     identifier: str
@@ -343,6 +423,11 @@ class RideStatusUpdate(BaseModel):
 class RideRating(BaseModel):
     rating: int  # 1-5
     comment: Optional[str] = None
+
+
+class WithdrawRequest(BaseModel):
+    montant: float
+    methode: str  # 'moncash' | 'natcash' | 'bank'
 
 class TestRideRequest(BaseModel):
     driver_id: Optional[str] = None
@@ -532,6 +617,18 @@ async def init_database():
             status TEXT NOT NULL,
             reason TEXT,
             verified_by UUID,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        -- Driver vehicles (plusieurs véhicules par chauffeur: machin + moto)
+        CREATE TABLE IF NOT EXISTS driver_vehicles (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            driver_id UUID NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+            vehicle_type TEXT NOT NULL,
+            vehicle_brand TEXT NOT NULL,
+            vehicle_model TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            vehicle_color TEXT,
             created_at TIMESTAMP DEFAULT NOW()
         );
 
@@ -1946,7 +2043,8 @@ async def reject_driver(
             "document_status": "rejected",
             "rejection_reason": reason,
             "verified_at": datetime.utcnow().isoformat(),
-            "verified_by": current_user['user_id']
+            "verified_by": current_user['user_id'],
+            "is_online": False,
         }).eq("id", driver_id).execute()
         if result.data:
             supabase.table("driver_verifications").insert({
@@ -2349,11 +2447,22 @@ async def resolve_complaint(
 
 @api_router.get("/rides/nearby-drivers")
 async def get_nearby_drivers(lat: float, lng: float, vehicle_type: str, city: str):
-    """Get nearby available drivers"""
+    """Get nearby available drivers (inclut chauffeurs avec véhicule principal ou additionnel du type demandé)"""
     try:
+        # Chauffeurs dont le véhicule principal correspond
         query = supabase.table("drivers").select("*").eq("is_online", True).eq("status", "approved").eq("vehicle_type", vehicle_type).eq("city", city)
         result = query.execute()
-        drivers = result.data or []
+        drivers = list(result.data or [])
+        driver_ids_from_primary = {d.get("id") for d in drivers if d.get("id")}
+        # Chauffeurs qui ont un véhicule additionnel du type demandé
+        extra = supabase.table("driver_vehicles").select("driver_id").eq("vehicle_type", vehicle_type).execute()
+        extra_driver_ids = [r["driver_id"] for r in (extra.data or []) if r.get("driver_id")]
+        if extra_driver_ids:
+            more = supabase.table("drivers").select("*").eq("is_online", True).eq("status", "approved").eq("city", city).in_("id", extra_driver_ids).execute()
+            for d in (more.data or []):
+                if d.get("id") and d.get("id") not in driver_ids_from_primary:
+                    drivers.append(d)
+                    driver_ids_from_primary.add(d.get("id"))
 
         driver_ids = [d.get('id') for d in drivers if d.get('id')]
         busy_driver_ids = set()
@@ -2933,11 +3042,12 @@ async def update_ride_status(ride_id: str, data: RideStatusUpdate, current_user:
             if data.reason:
                 update_data['cancel_reason'] = data.reason
         
-        ride_query = supabase.table("rides").select("id,passenger_id,driver_id,status").eq("id", ride_id)
+        ride_query = supabase.table("rides").select("id,passenger_id,driver_id,status,city,admin_id,estimated_price,final_price").eq("id", ride_id)
         ride_result = ride_query.execute()
         if not ride_result.data:
             raise HTTPException(status_code=404, detail="Ride not found")
         ride = ride_result.data[0]
+        was_completed = ride.get("status") == "completed"
 
         if current_user['user_type'] == 'passenger':
             if ride.get('passenger_id') != current_user['user_id']:
@@ -2958,6 +3068,14 @@ async def update_ride_status(ride_id: str, data: RideStatusUpdate, current_user:
         result = supabase.table("rides").update(update_data).eq("id", ride_id).execute()
         
         if result.data:
+            if data.status == "completed" and not was_completed:
+                driver_id = ride.get("driver_id")
+                if driver_id:
+                    fp = float(result.data[0].get("final_price") or ride.get("estimated_price") or 0)
+                    _credit_driver_wallet_after_ride(
+                        ride_id, driver_id, fp,
+                        ride.get("city"), ride.get("admin_id"),
+                    )
             return {"success": True, "ride": result.data[0]}
         raise HTTPException(status_code=404, detail="Ride not found")
     except Exception as e:
@@ -2987,6 +3105,395 @@ async def rate_ride(ride_id: str, data: RideRating, current_user: dict = Depends
     except Exception as e:
         logger.error(f"Rate ride error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== WALLET & RETRAITS (chauffeur + admin) ==============
+
+@api_router.get("/wallet")
+async def get_wallet(current_user: dict = Depends(get_current_user)):
+    """Driver: get wallet balance and withdrawal eligibility."""
+    if current_user["user_type"] != "driver":
+        raise HTTPException(status_code=403, detail="Driver only")
+    chauffeur_id = current_user["user_id"]
+    try:
+        wallet = _get_or_create_wallet(chauffeur_id)
+        balance = float(wallet.get("balance") or 0)
+        balance_en_attente = float(wallet.get("balance_en_attente") or 0)
+        total_gagne = float(wallet.get("total_gagne") or 0)
+        total_retire = float(wallet.get("total_retire") or 0)
+
+        # Dernier retrait (demande) pour délai 24h
+        dernier = (
+            supabase.table("retraits")
+            .select("date_demande,date_traitement")
+            .eq("chauffeur_id", chauffeur_id)
+            .in_("statut", ["en_attente", "traite"])
+            .order("date_demande", desc=True)
+            .limit(1)
+            .execute()
+        )
+        dernier_retrait_ts = None
+        if dernier.data:
+            dt = dernier.data[0].get("date_traitement") or dernier.data[0].get("date_demande")
+            if dt:
+                try:
+                    dernier_retrait_ts = datetime.fromisoformat(dt.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    pass
+
+        possible = True
+        raison = None
+        prochain_retrait = None
+        if balance < REGLES_RETRAIT["montant_minimum"]:
+            possible = False
+            raison = f"Balans minimum: {REGLES_RETRAIT['montant_minimum']} HTG"
+        elif dernier_retrait_ts:
+            heures_depuis = (datetime.utcnow().timestamp() - dernier_retrait_ts) / 3600
+            if heures_depuis < REGLES_RETRAIT["delai_entre_retraits_heures"]:
+                possible = False
+                restant = REGLES_RETRAIT["delai_entre_retraits_heures"] - heures_depuis
+                raison = f"Pwochen retrait posib nan {int(restant)}h"
+                prochain_retrait = dernier_retrait_ts + REGLES_RETRAIT["delai_entre_retraits_heures"] * 3600
+
+        type_retrait = "automatique_disponible" if balance >= REGLES_RETRAIT["seuil_automatique"] else "manuel_seulement"
+        message = "Retrait disponib kounye a" if type_retrait == "automatique_disponible" else f"Retrait manuel (Oto a pati de {REGLES_RETRAIT['seuil_automatique']} HTG)"
+
+        return {
+            "wallet": {
+                "balance": balance,
+                "balance_en_attente": balance_en_attente,
+                "total_gagne": total_gagne,
+                "total_retire": total_retire,
+            },
+            "retrait_possible": possible,
+            "raison": raison,
+            "prochain_retrait_ts": prochain_retrait,
+            "type_retrait": type_retrait,
+            "message": message,
+            "regles": REGLES_RETRAIT,
+        }
+    except Exception as e:
+        logger.error(f"Get wallet error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/wallet/transactions")
+async def get_wallet_transactions(
+    limit: int = Query(50, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
+    """Driver: transaction history."""
+    if current_user["user_type"] != "driver":
+        raise HTTPException(status_code=403, detail="Driver only")
+    chauffeur_id = current_user["user_id"]
+    try:
+        r = (
+            supabase.table("driver_transactions")
+            .select("id,ride_id,retrait_id,type_txn,montant,montant_total,gain_chauffeur,methode,reference,created_at")
+            .eq("chauffeur_id", chauffeur_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        retraits = (
+            supabase.table("retraits")
+            .select("id,montant,methode,statut,date_demande,date_traitement")
+            .eq("chauffeur_id", chauffeur_id)
+            .order("date_demande", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        out = []
+        for t in r.data or []:
+            out.append({
+                "id": t.get("id"),
+                "type": t.get("type_txn"),
+                "montant": float(t.get("montant") or 0),
+                "montant_total": t.get("montant_total") and float(t["montant_total"]),
+                "gain_chauffeur": t.get("gain_chauffeur") and float(t["gain_chauffeur"]),
+                "methode": t.get("methode"),
+                "reference": t.get("reference"),
+                "date": t.get("created_at"),
+                "ride_id": t.get("ride_id"),
+            })
+        for ret in retraits.data or []:
+            out.append({
+                "id": ret.get("id"),
+                "type": "retrait_demande" if ret.get("statut") == "en_attente" else "retrait_traite" if ret.get("statut") == "traite" else "retrait_annule",
+                "montant": -float(ret.get("montant") or 0),
+                "methode": ret.get("methode"),
+                "date": ret.get("date_traitement") or ret.get("date_demande"),
+                "retrait_id": ret.get("id"),
+                "statut": ret.get("statut"),
+            })
+        out.sort(key=lambda x: (x.get("date") or ""), reverse=True)
+        return {"transactions": out[:limit]}
+    except Exception as e:
+        logger.error(f"Wallet transactions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/wallet/withdraw")
+async def request_withdraw(data: WithdrawRequest, current_user: dict = Depends(get_current_user)):
+    """Driver: request withdrawal."""
+    if current_user["user_type"] != "driver":
+        raise HTTPException(status_code=403, detail="Driver only")
+    if data.methode not in ("moncash", "natcash", "bank"):
+        raise HTTPException(status_code=400, detail="Methode dwe moncash, natcash oswa bank")
+    chauffeur_id = current_user["user_id"]
+    montant = round(float(data.montant), 2)
+    if montant < REGLES_RETRAIT["montant_minimum"]:
+        raise HTTPException(status_code=400, detail=f"Montan minimum: {REGLES_RETRAIT['montant_minimum']} HTG")
+
+    try:
+        wallet = _get_or_create_wallet(chauffeur_id)
+        balance = float(wallet.get("balance") or 0)
+        if montant > balance:
+            raise HTTPException(status_code=400, detail="Montan pi gran pase balans disponib")
+
+        # Délai 24h
+        dernier = (
+            supabase.table("retraits")
+            .select("date_traitement,date_demande")
+            .eq("chauffeur_id", chauffeur_id)
+            .in_("statut", ["en_attente", "traite"])
+            .order("date_demande", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if dernier.data:
+            dt = dernier.data[0].get("date_traitement") or dernier.data[0].get("date_demande")
+            if dt:
+                try:
+                    ts = datetime.fromisoformat(dt.replace("Z", "+00:00")).timestamp()
+                    heures = (datetime.utcnow().timestamp() - ts) / 3600
+                    if heures < REGLES_RETRAIT["delai_entre_retraits_heures"]:
+                        restant = int(REGLES_RETRAIT["delai_entre_retraits_heures"] - heures)
+                        raise HTTPException(status_code=400, detail=f"Pwochen retrait nan {restant}h")
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
+
+        driver = supabase.table("drivers").select("full_name,phone,moncash_phone,natcash_phone,bank_name,bank_account_number,admin_id").eq("id", chauffeur_id).execute()
+        if not driver.data:
+            raise HTTPException(status_code=404, detail="Chofè pa jwenn")
+        d = driver.data[0]
+        numero_compte = None
+        if data.methode == "moncash":
+            numero_compte = (d.get("moncash_phone") or "").strip() or None
+            if not numero_compte:
+                raise HTTPException(status_code=400, detail="Antre nimewo MonCash nan profil ou")
+        elif data.methode == "natcash":
+            numero_compte = (d.get("natcash_phone") or "").strip() or None
+            if not numero_compte:
+                raise HTTPException(status_code=400, detail="Antre nimewo NatCash nan profil ou")
+        elif data.methode == "bank":
+            numero_compte = (d.get("bank_account_number") or "").strip() or None
+            if not numero_compte:
+                raise HTTPException(status_code=400, detail="Antre nimewo kont bank nan profil ou")
+
+        type_retrait = "automatique_disponible" if balance >= REGLES_RETRAIT["seuil_automatique"] else "manuel_seulement"
+        retrait_id = str(uuid.uuid4())
+        supabase.table("retraits").insert({
+            "id": retrait_id,
+            "chauffeur_id": chauffeur_id,
+            "admin_id": d.get("admin_id"),
+            "montant": montant,
+            "methode": data.methode,
+            "numero_compte": numero_compte,
+            "statut": "en_attente",
+            "type_retrait": type_retrait,
+        }).execute()
+
+        new_balance = balance - montant
+        new_attente = float(wallet.get("balance_en_attente") or 0) + montant
+        supabase.table("driver_wallets").update({
+            "balance": new_balance,
+            "balance_en_attente": new_attente,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("chauffeur_id", chauffeur_id).execute()
+        supabase.table("drivers").update({"wallet_balance": new_balance, "updated_at": datetime.utcnow().isoformat()}).eq("id", chauffeur_id).execute()
+
+        create_notification(
+            chauffeur_id,
+            "driver",
+            "Demann retrait anrejistre",
+            f"{montant:.0f} HTG an kous de tretman. Ou ap resevwa yon notifikasyon le peyeman an fèt.",
+        )
+        return {
+            "success": True,
+            "retrait_id": retrait_id,
+            "message": "Demann ou an kous de tretman. Ou ap resevwa yon notifikasyon le peyeman an fèt.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Withdraw request error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/admin/retraits")
+async def list_retraits_admin(
+    statut: Optional[str] = Query(None),
+    methode: Optional[str] = Query(None),
+    min_montant: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Admin/Superadmin: list withdrawal requests."""
+    if current_user["user_type"] not in ("admin", "superadmin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        query = supabase.table("retraits").select(
+            "id,chauffeur_id,admin_id,montant,methode,numero_compte,statut,type_retrait,date_demande,date_traitement,traite_par"
+        )
+        if statut:
+            query = query.eq("statut", statut)
+        else:
+            query = query.eq("statut", "en_attente")
+        if methode:
+            query = query.eq("methode", methode)
+        if min_montant is not None:
+            query = query.gte("montant", min_montant)
+        if current_user["user_type"] == "admin":
+            query = query.eq("admin_id", current_user["user_id"])
+        elif current_user["user_type"] == "subadmin" and current_user.get("admin_id"):
+            query = query.eq("admin_id", current_user["admin_id"])
+        r = query.order("date_demande", desc=True).execute()
+        rows = r.data or []
+        driver_ids = list({x["chauffeur_id"] for x in rows if x.get("chauffeur_id")})
+        drivers = {}
+        if driver_ids:
+            dr = supabase.table("drivers").select(
+                "id,full_name,phone,moncash_phone,natcash_phone,bank_name,bank_account_name,bank_account_number"
+            ).in_("id", driver_ids).execute()
+            for d in dr.data or []:
+                drivers[d["id"]] = d
+        out = []
+        for row in rows:
+            d = drivers.get(row["chauffeur_id"]) or {}
+            out.append({
+                **row,
+                "chauffeur_nom": d.get("full_name"),
+                "chauffeur_phone": d.get("phone"),
+                "bank_name": d.get("bank_name"),
+                "bank_account_name": d.get("bank_account_name"),
+            })
+        # Stats
+        pending_count = len([x for x in out if x.get("statut") == "en_attente"])
+        pending_total = sum(float(x.get("montant") or 0) for x in out if x.get("statut") == "en_attente")
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        traites_query = supabase.table("retraits").select("id,montant").eq("statut", "traite").gte("date_traitement", today_start)
+        if current_user["user_type"] == "admin":
+            traites_query = traites_query.eq("admin_id", current_user["user_id"])
+        elif current_user["user_type"] == "subadmin" and current_user.get("admin_id"):
+            traites_query = traites_query.eq("admin_id", current_user["admin_id"])
+        traites_today = traites_query.execute()
+        return {
+            "retraits": out,
+            "stats": {
+                "en_attente_count": pending_count,
+                "en_attente_total": round(pending_total, 2),
+                "traites_aujourdhui_count": len(traites_today.data or []),
+                "traites_aujourdhui_total": round(sum(float(x.get("montant") or 0) for x in (traites_today.data or [])), 2),
+            },
+        }
+    except Exception as e:
+        logger.error(f"List retraits error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/admin/retraits/{retrait_id}/traiter")
+async def traiter_retrait(retrait_id: str, current_user: dict = Depends(get_current_user)):
+    """Mark withdrawal as paid."""
+    if current_user["user_type"] not in ("admin", "superadmin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        ret = supabase.table("retraits").select("*").eq("id", retrait_id).execute()
+        if not ret.data:
+            raise HTTPException(status_code=404, detail="Retrait pa jwenn")
+        row = ret.data[0]
+        if row.get("statut") != "en_attente":
+            raise HTTPException(status_code=400, detail="Retrait la pa an attant")
+        chauffeur_id = row["chauffeur_id"]
+        montant = float(row.get("montant") or 0)
+        wallet = _get_or_create_wallet(chauffeur_id)
+        attente = float(wallet.get("balance_en_attente") or 0) - montant
+        total_retire = float(wallet.get("total_retire") or 0) + montant
+        supabase.table("driver_wallets").update({
+            "balance_en_attente": max(0, attente),
+            "total_retire": total_retire,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("chauffeur_id", chauffeur_id).execute()
+        supabase.table("retraits").update({
+            "statut": "traite",
+            "date_traitement": datetime.utcnow().isoformat(),
+            "traite_par": current_user["user_id"],
+        }).eq("id", retrait_id).execute()
+        supabase.table("driver_transactions").insert({
+            "chauffeur_id": chauffeur_id,
+            "retrait_id": retrait_id,
+            "type_txn": "retrait_traite",
+            "montant": -montant,
+            "methode": row.get("methode"),
+            "reference": retrait_id,
+            "statut": "ok",
+        }).execute()
+        create_notification(
+            chauffeur_id,
+            "driver",
+            "Retrait efektue",
+            f"{montant:.0f} HTG voye nan {row.get('methode', '').upper()}.",
+        )
+        return {"success": True, "message": "Retrait make kòm peye"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Traiter retrait error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/admin/retraits/{retrait_id}/annuler")
+async def annuler_retrait(retrait_id: str, current_user: dict = Depends(get_current_user)):
+    """Cancel withdrawal and refund driver wallet."""
+    if current_user["user_type"] not in ("admin", "superadmin", "subadmin"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        ret = supabase.table("retraits").select("*").eq("id", retrait_id).execute()
+        if not ret.data:
+            raise HTTPException(status_code=404, detail="Retrait pa jwenn")
+        row = ret.data[0]
+        if row.get("statut") != "en_attente":
+            raise HTTPException(status_code=400, detail="Retrait la pa an attant")
+        chauffeur_id = row["chauffeur_id"]
+        montant = float(row.get("montant") or 0)
+        wallet = _get_or_create_wallet(chauffeur_id)
+        new_balance = float(wallet.get("balance") or 0) + montant
+        attente = float(wallet.get("balance_en_attente") or 0) - montant
+        supabase.table("driver_wallets").update({
+            "balance": new_balance,
+            "balance_en_attente": max(0, attente),
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("chauffeur_id", chauffeur_id).execute()
+        supabase.table("drivers").update({"wallet_balance": new_balance, "updated_at": datetime.utcnow().isoformat()}).eq("id", chauffeur_id).execute()
+        supabase.table("retraits").update({
+            "statut": "annule",
+            "date_traitement": datetime.utcnow().isoformat(),
+            "traite_par": current_user["user_id"],
+        }).eq("id", retrait_id).execute()
+        create_notification(
+            chauffeur_id,
+            "driver",
+            "Retrait anile",
+            f"{montant:.0f} HTG remet nan balans ou.",
+        )
+        return {"success": True, "message": "Retrait anile"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Annuler retrait error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============== VEHICLE DATA ==============
 
@@ -3217,6 +3724,161 @@ async def update_profile(data: Dict[str, Any], current_user: dict = Depends(get_
     except Exception as e:
         logger.error(f"Update profile error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== DRIVER VEHICLES (plusieurs véhicules par chauffeur) ==============
+
+@api_router.get("/drivers/me/vehicles")
+async def get_my_vehicles(current_user: dict = Depends(get_current_user)):
+    """Liste des véhicules du chauffeur (véhicule principal + véhicules additionnels)"""
+    if current_user['user_type'] != 'driver':
+        raise HTTPException(status_code=403, detail="Driver only")
+    driver_id = current_user['user_id']
+    try:
+        driver_row = supabase.table("drivers").select(
+            "id,vehicle_type,vehicle_brand,vehicle_model,plate_number,vehicle_color"
+        ).eq("id", driver_id).execute()
+        primary = None
+        if driver_row.data and len(driver_row.data) > 0:
+            d = driver_row.data[0]
+            primary = {
+                "id": str(d["id"]),
+                "is_primary": True,
+                "vehicle_type": d.get("vehicle_type") or "car",
+                "vehicle_brand": d.get("vehicle_brand") or "",
+                "vehicle_model": d.get("vehicle_model") or "",
+                "plate_number": d.get("plate_number") or "",
+                "vehicle_color": d.get("vehicle_color"),
+            }
+        extra = supabase.table("driver_vehicles").select(
+            "id,vehicle_type,vehicle_brand,vehicle_model,plate_number,vehicle_color,created_at"
+        ).eq("driver_id", driver_id).order("created_at").execute()
+        extra_list = []
+        for row in (extra.data or []):
+            extra_list.append({
+                "id": str(row["id"]),
+                "is_primary": False,
+                "vehicle_type": row.get("vehicle_type") or "car",
+                "vehicle_brand": row.get("vehicle_brand") or "",
+                "vehicle_model": row.get("vehicle_model") or "",
+                "plate_number": row.get("plate_number") or "",
+                "vehicle_color": row.get("vehicle_color"),
+                "created_at": row.get("created_at"),
+            })
+        return {"vehicles": [primary] + extra_list if primary else extra_list}
+    except Exception as e:
+        logger.error(f"Get my vehicles error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/drivers/me/vehicles")
+async def add_my_vehicle(data: DriverVehicleCreate, current_user: dict = Depends(get_current_user)):
+    """Ajouter un véhicule (moto ou machin)"""
+    if current_user['user_type'] != 'driver':
+        raise HTTPException(status_code=403, detail="Driver only")
+    driver_id = current_user['user_id']
+    if not data.vehicle_type or data.vehicle_type not in ("moto", "car"):
+        raise HTTPException(status_code=400, detail="vehicle_type must be moto or car")
+    if not (data.vehicle_brand and data.vehicle_brand.strip()):
+        raise HTTPException(status_code=400, detail="vehicle_brand required")
+    if not (data.vehicle_model and data.vehicle_model.strip()):
+        raise HTTPException(status_code=400, detail="vehicle_model required")
+    if not (data.plate_number and data.plate_number.strip()):
+        raise HTTPException(status_code=400, detail="plate_number required")
+    try:
+        existing = supabase.table("drivers").select("plate_number").eq("id", driver_id).execute()
+        plates = {existing.data[0].get("plate_number")} if existing.data else set()
+        extra = supabase.table("driver_vehicles").select("plate_number").eq("driver_id", driver_id).execute()
+        for r in (extra.data or []):
+            plates.add(r.get("plate_number"))
+        if data.plate_number.strip().upper() in {p.upper() for p in plates if p}:
+            raise HTTPException(status_code=400, detail="Nimewo plak sa a egziste deja")
+        vehicle_color_val = (data.vehicle_color or "").strip() or None
+        row = {
+            "driver_id": driver_id,
+            "vehicle_type": data.vehicle_type.strip().lower(),
+            "vehicle_brand": data.vehicle_brand.strip(),
+            "vehicle_model": data.vehicle_model.strip(),
+            "plate_number": data.plate_number.strip(),
+            "vehicle_color": vehicle_color_val,
+        }
+        result = supabase.table("driver_vehicles").insert(row).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Insert failed")
+        out = result.data[0]
+        return {
+            "vehicle": {
+                "id": str(out["id"]),
+                "is_primary": False,
+                "vehicle_type": out.get("vehicle_type"),
+                "vehicle_brand": out.get("vehicle_brand"),
+                "vehicle_model": out.get("vehicle_model"),
+                "plate_number": out.get("plate_number"),
+                "vehicle_color": out.get("vehicle_color"),
+                "created_at": out.get("created_at"),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Add vehicle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.put("/drivers/me/vehicles/{vehicle_id}")
+async def update_my_vehicle(
+    vehicle_id: str, data: Dict[str, Any], current_user: dict = Depends(get_current_user)
+):
+    """Modifier un véhicule (principal sur drivers, ou dans driver_vehicles)"""
+    if current_user['user_type'] != 'driver':
+        raise HTTPException(status_code=403, detail="Driver only")
+    driver_id = current_user['user_id']
+    allowed = {"vehicle_type", "vehicle_brand", "vehicle_model", "plate_number", "vehicle_color"}
+    update_data = {k: v for k, v in (data or {}).items() if k in allowed}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    if "vehicle_type" in update_data and update_data["vehicle_type"] not in ("moto", "car"):
+        raise HTTPException(status_code=400, detail="vehicle_type must be moto or car")
+    try:
+        if vehicle_id == driver_id:
+            result = supabase.table("drivers").update(update_data).eq("id", driver_id).execute()
+            if not result.data:
+                raise HTTPException(status_code=404, detail="User not found")
+            return {"vehicle": {**result.data[0], "id": driver_id, "is_primary": True}}
+        row = supabase.table("driver_vehicles").select("id").eq("id", vehicle_id).eq("driver_id", driver_id).execute()
+        if not row.data:
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+        result = supabase.table("driver_vehicles").update(update_data).eq("id", vehicle_id).eq("driver_id", driver_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+        out = result.data[0]
+        return {"vehicle": {**out, "is_primary": False}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update vehicle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.delete("/drivers/me/vehicles/{vehicle_id}")
+async def delete_my_vehicle(vehicle_id: str, current_user: dict = Depends(get_current_user)):
+    """Supprimer un véhicule additionnel (pas le véhicule principal)"""
+    if current_user['user_type'] != 'driver':
+        raise HTTPException(status_code=403, detail="Driver only")
+    driver_id = current_user['user_id']
+    if vehicle_id == driver_id:
+        raise HTTPException(status_code=400, detail="Ou pa ka efase veyikil prensipal la")
+    try:
+        result = supabase.table("driver_vehicles").delete().eq("id", vehicle_id).eq("driver_id", driver_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete vehicle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Build APK routes (SuperAdmin)
 @api_router.post("/superadmin/builds/generate")

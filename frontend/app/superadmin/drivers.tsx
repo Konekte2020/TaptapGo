@@ -18,6 +18,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Shadows } from '../../src/constants/colors';
 import { HAITI_DEPARTMENTS, DEPARTMENT_CITIES } from '../../src/constants/haiti';
+import { geocodeAddress } from '../../src/utils/geocoding';
 import { adminAPI, driverAPI, rideAPI } from '../../src/services/api';
 
 export default function SuperAdminDrivers() {
@@ -177,19 +178,6 @@ export default function SuperAdminDrivers() {
     } finally {
       setReminding(false);
     }
-  };
-
-  const geocodeAddress = async (value: string) => {
-    const token = process.env.EXPO_PUBLIC_MAPBOX_TOKEN || '';
-    if (!token) return null;
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(trimmed)}.json?access_token=${token}&country=ht&limit=1&types=address,place,locality,neighborhood`;
-    const response = await fetch(url);
-    const data = await response.json();
-    const first = data?.features?.[0];
-    if (!first?.center?.length) return null;
-    return { lat: first.center[1], lng: first.center[0] };
   };
 
   const isValidDepartment = (value: string) => HAITI_DEPARTMENTS.includes(value);

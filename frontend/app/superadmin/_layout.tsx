@@ -85,6 +85,15 @@ export default function SuperAdminLayout() {
         }}
       />
       <Tabs.Screen
+        name="retraits"
+        options={{
+          title: 'Retrait',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cash" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: 'Paramèt',

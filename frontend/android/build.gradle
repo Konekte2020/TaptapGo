@@ -22,3 +22,45 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
+
+// Lit MAPBOX_DOWNLOADS_TOKEN (local.properties > gradle.properties > env). Si 403, créer un token "Downloads: Read" sur account.mapbox.com
+def getMapboxDownloadToken() {
+  def root = rootProject
+  def fromGradle = root.findProperty('MAPBOX_DOWNLOADS_TOKEN') ?: root.findProperty('RNMAPBOX_MAPS_DOWNLOAD_TOKEN')
+  if (fromGradle) return fromGradle
+  def env = System.getenv('RNMAPBOX_MAPS_DOWNLOAD_TOKEN')
+  if (env) return env
+  def localFile = root.file('local.properties')
+  if (localFile.exists()) {
+    def local = new Properties()
+    local.load(new FileInputStream(localFile))
+    return local.getProperty('MAPBOX_DOWNLOADS_TOKEN') ?: local.getProperty('RNMAPBOX_MAPS_DOWNLOAD_TOKEN')
+  }
+  return null
+}
+
+// @generated begin @rnmapbox/maps-v2-maven - expo prebuild (DO NOT MODIFY) sync-d4ccbfdff48fdba3138b02a8ba41b9722af001d8
+
+allprojects {
+  repositories {
+    maven {
+      url 'https://api.mapbox.com/downloads/v2/releases/maven'
+      // Authentication is no longer required as per Mapbox's removal of download token requirement
+      // See: https://github.com/mapbox/mapbox-maps-flutter/issues/775
+      // Keeping this as optional for backward compatibility
+      def token = getMapboxDownloadToken()
+      if (token) {
+        logger.lifecycle('[Mapbox] Token de téléchargement trouvé (scope Downloads: Read requis)')
+        authentication { basic(BasicAuthentication) }
+        credentials {
+          username = 'mapbox'
+          password = token
+        }
+      } else {
+        logger.warn('[Mapbox] Aucun token (MAPBOX_DOWNLOADS_TOKEN / RNMAPBOX_MAPS_DOWNLOAD_TOKEN). 403 attendu. Voir android/gradle.properties ou .env')
+      }
+    }
+  }
+}
+
+// @generated end @rnmapbox/maps-v2-maven

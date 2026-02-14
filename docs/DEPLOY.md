@@ -4,6 +4,20 @@ Checklist et étapes pour déployer le projet en ligne (backend, base de donnée
 
 ---
 
+## Prêt pour déploiement
+
+**Backend en production :** [https://taptapgo.onrender.com](https://taptapgo.onrender.com)
+
+Le projet est prêt pour le déploiement une fois que tu as :
+
+1. **Backend** : déjà hébergé sur Render ; vérifier `CORS_ORIGINS` sur Render (domaines de l’app web + Expo).
+2. **Base de données** : `database_setup.sql` + migrations exécutées sur Supabase ; bucket `builds` créé.
+3. **App mobile** : EAS Secrets configurés (depuis `frontend/`) avec l’URL du backend : `https://taptapgo.onrender.com`, plus `EXPO_PUBLIC_MAPBOX_TOKEN`.
+
+Ensuite : `cd frontend && eas build --profile production --platform android`.
+
+---
+
 ## 1. Backend (API)
 
 ### Variables d’environnement obligatoires
@@ -36,7 +50,7 @@ docker run -p 8000:8000 --env-file backend/.env taptapgo-backend
 
 ### Health check
 
-- **URL :** `GET /api/health`
+- **URL :** `GET /api/health` → en prod : [https://taptapgo.onrender.com/api/health](https://taptapgo.onrender.com/api/health)
 - **Réponse :** `{"status": "ok"}`
 - À utiliser pour les load balancers et la surveillance (uptime).
 
@@ -61,23 +75,21 @@ docker run -p 8000:8000 --env-file backend/.env taptapgo-backend
 
 ### Variables pour les builds
 
-Dans **EAS** (expo.dev), configurer les **Secrets** pour les profils `preview` et `production` (ou définir les env dans `eas.json` sans committer de secrets) :
+Le projet est configuré pour le déploiement : `eas.json` n’utilise plus de valeurs en dur. **Tu dois configurer les EAS Secrets** pour les profils `preview` et `production` (depuis le dossier `frontend`) :
 
 | Variable                         | Description |
 |---------------------------------|-------------|
-| `EXPO_PUBLIC_BACKEND_URL`       | URL publique HTTPS de l’API (ex. `https://api.taptapgo.com`) |
-| `EXPO_PUBLIC_BACKEND_URL_ANDROID` | Souvent la même que ci‑dessus |
-| `EXPO_PUBLIC_MAPBOX_TOKEN`      | Token Mapbox pour les cartes |
+| `EXPO_PUBLIC_BACKEND_URL`       | URL de l’API (prod : `https://taptapgo.onrender.com`) |
+| `EXPO_PUBLIC_BACKEND_URL_ANDROID` | Même URL que ci‑dessus |
+| `EXPO_PUBLIC_MAPBOX_TOKEN`      | Token Mapbox pour les cartes (tu peux le garder dans `.env` en local) |
 | `EXPO_PUBLIC_BRAND_ID`          | (Optionnel) ID marque white-label |
 | `EXPO_PUBLIC_BRAND_NAME`        | (Optionnel) Nom de la marque |
-
-Ne pas laisser `REPLACE_ME` dans les builds de production. Définir les valeurs soit dans **EAS Secrets** (recommandé), soit en remplaçant dans `eas.json` avant de build (sans committer de secrets).
 
 Exemple avec EAS Secrets (depuis le dossier `frontend`) :
 
 ```bash
-eas secret:create --name EXPO_PUBLIC_BACKEND_URL --value "https://api.votre-domaine.com" --scope project
-eas secret:create --name EXPO_PUBLIC_BACKEND_URL_ANDROID --value "https://api.votre-domaine.com" --scope project
+eas secret:create --name EXPO_PUBLIC_BACKEND_URL --value "https://taptapgo.onrender.com" --scope project
+eas secret:create --name EXPO_PUBLIC_BACKEND_URL_ANDROID --value "https://taptapgo.onrender.com" --scope project
 eas secret:create --name EXPO_PUBLIC_MAPBOX_TOKEN --value "pk.xxx" --scope project
 ```
 
@@ -106,13 +118,13 @@ Voir `docs/EAS_BUILD_ET_SUBMIT.md` pour le détail.
 
 ## 5. CORS en production
 
-Sur le serveur backend, définir par exemple :
+Sur Render (dashboard → service → Environment), définir `CORS_ORIGINS` avec les domaines qui appellent l’API, par exemple :
 
 ```env
-CORS_ORIGINS=https://votre-app.com,https://admin.votre-app.com,https://votre-app.expo.dev
+CORS_ORIGINS=https://taptapgoht.com,https://votre-app.expo.dev,exp://192.168.0.0
 ```
 
-Adapter aux domaines réels de l’app web et des previews Expo. Ne pas utiliser `*` en production.
+Backend actuel : **https://taptapgo.onrender.com**. Adapter la liste aux domaines réels (app web, previews Expo). Ne pas utiliser `*` en production.
 
 ---
 
@@ -125,7 +137,7 @@ Adapter aux domaines réels de l’app web et des previews Expo. Ne pas utiliser
 | CORS | Définir `CORS_ORIGINS` avec les domaines réels |
 | Health | Vérifier que `GET /api/health` répond `{"status":"ok"}` |
 | Base de données | Appliquer `database_setup.sql` + migrations sur Supabase prod |
-| EAS / app | Remplacer tous les `REPLACE_ME` par de vraies valeurs ou EAS Secrets |
+| EAS / app | EAS Secrets : `EXPO_PUBLIC_BACKEND_URL` = `https://taptapgo.onrender.com`, plus Mapbox |
 | Build depuis le serveur | Configurer `EXPO_TOKEN` côté backend |
 | Stores | Comptes développeur + fiches store (description, captures, politique de confidentialité) |
 

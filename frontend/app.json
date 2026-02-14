@@ -14,8 +14,12 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Jwenn chofè ki pi pre ou",
         "NSLocationAlwaysUsageDescription": "Swiv wout ou nan kous",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Pèmèt TapTapGo konnen kote ou ye pou jwenn chofè epi swiv wout ou",
         "NSCameraUsageDescription": "Pran foto pou dokiman ou",
         "NSPhotoLibraryUsageDescription": "Chwazi foto pou profil ou"
+      },
+      "config": {
+        "googleMapsApiKey": "VOTRE_GOOGLE_MAPS_KEY_IOS"
       }
     },
     "android": {
@@ -28,11 +32,17 @@
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO"
-      ]
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "VOTRE_GOOGLE_MAPS_KEY_ANDROID"
+        }
+      }
     },
     "web": {
       "bundler": "metro",

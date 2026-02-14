@@ -41,7 +41,12 @@ export default function Index() {
             router.replace('/passenger/home');
             break;
           case 'driver':
-            router.replace('/driver/home');
+            // Chauffeur non approuvé (documents non vérifiés) → écran "En atant"
+            if (user.status !== 'approved') {
+              router.replace('/driver/pending');
+            } else {
+              router.replace('/driver/home');
+            }
             break;
           case 'admin':
             router.replace('/admin/dashboard');
